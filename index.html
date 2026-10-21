@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SlitCam</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #fff; font-family: Arial, sans-serif; }
+  #hud { position: fixed; top: 0; left: 0; right: 0; padding: 6px 12px; background: rgba(255,255,255,.85);
+         font-size: 14px; display: flex; gap: 24px; flex-wrap: wrap; z-index: 2; }
+  #help { position: fixed; bottom: 0; left: 0; right: 0; padding: 6px 12px; background: rgba(255,255,255,.85);
+          font-size: 12px; color: #444; z-index: 2; }
+  canvas { display: block; width: 100%; height: auto; margin-top: 30px; }
+  video { display: none; }
+  #msg { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+         font-size: 18px; text-align: center; padding: 24px; z-index: 3; background: #fff; }
+  #msg.hidden { display: none; }
+  button { font-size: 16px; padding: 8px 16px; }
+</style>
+</head>
+<body>
+<div id="hud">
+  <span id="tTime"></span><span id="tFascia"></span><span id="tRGB"></span>
+</div>
+<div id="msg"><div>
+  <p>SlitCam: lo scorrimento della fessura centrale della webcam.</p>
+  <button id="start">Avvia webcam</button>
+  <p id="err" style="color:#b00"></p>
+</div></div>
+<div id="help">
+  e / r: fascia +/- 10 px &nbsp;|&nbsp; d / f: tempo +/- 10 ms &nbsp;|&nbsp; y/u: rosso +/- &nbsp;|&nbsp;
+  h/j: verde +/- &nbsp;|&nbsp; n/m: blu +/- &nbsp;|&nbsp; s: salva PNG &nbsp;|&nbsp; c: pulisci
+</div>
+<video id="cam" playsinline muted></video>
+<canvas id="out"></canvas>
+
+<script>
+(() => {
+  const BUF_W = 3000;               // larghezza dell'immagine accumulata
+  let totalTime = 1;                // ms tra uno spostamento e il successivo
+  let lungFascia = 1;               // larghezza della fessura in px
+  let r = 255, g = 255, b = 255;    // tinta
+
+  const video = document.getElementById('cam');
+  const out = document.getElementById('out');
+  const ctx = out.getContext('2d');
+  const acc = document.createElement('canvas');   // immagine grezza accumulata (senza tinta)
+  const actx = acc.getContext('2d');
+  let lastShift = performance.now();
+  let running = false;
+
+  const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+
+  function maxFascia() {
+    const vw = video.videoWidth || 1;
+    return Math.max(1, Math.min(vw, BUF_W - 1));
+  }
+
+  function updateHud() {
+    document.getElementById('tTime').textContent = 'Tempo (ms): ' + totalTime;
+    document.getElementById('tFascia').textContent = 'Fascia (px): ' + lungFascia;
+    document.getElementById('tRGB').textContent = 'Colore RGB: ' + r + ' ' + g + ' ' + b;
+  }
+
+  function step() {
+    const vw = video.videoWidth, vh = video.videoHeight;
+    // sposta tutto a destra di lungFascia, poi copia la nuova fessura a sinistra
+    actx.drawImage(acc, 0, 0, BUF_W - lungFascia, vh, lungFascia, 0, BUF_W - lungFascia, vh);
+    const sx = Math.floor(vw / 2 - lungFascia / 2);
+    actx.drawImage(video, sx, 0, lungFascia, vh, 0, 0, lungFascia, vh);
+  }
+
+  function render() {
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.drawImage(acc, 0, 0);
+    if (r !== 255 || g !== 255 || b !== 255) {
+      ctx.globalCompositeOperation = 'multiply';   // equivalente a tint() di Processing
+      ctx.fillStyle = `rgb(${r},${g},${b})`;
+      ctx.fillRect(0, 0, out.width, out.height);
+      ctx.globalCompositeOperation = 'source-over';
+    }
+  }
+
+  function loop(now) {
+    if (!running) return;
+    if (video.readyState >= 2 && now - lastShift >= totalTime) {
+      lastShift = now;
+      step();
+    }
+    render();
+    requestAnimationFrame(loop);
+  }
+
+  async function start() {
+    const err = document.getElementById('err');
+    err.textContent = '';
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false
+      });
+      video.srcObject = stream;
+      await video.play();
+      // le dimensioni reali arrivano dalla camera, non da valori fissi
+      const vh = video.videoHeight;
+      out.width = acc.width = BUF_W;
+      out.height = acc.height = vh;
+      actx.fillStyle = '#fff'; actx.fillRect(0, 0, BUF_W, vh);
+      lungFascia = clamp(lungFascia, 1, maxFascia());
+      document.getElementById('msg').classList.add('hidden');
+      updateHud();
+      running = true;
+      requestAnimationFrame(loop);
+    } catch (e) {
+      err.textContent = 'Impossibile accedere alla webcam: ' + e.message +
+        ' (serve https o localhost, e il permesso della camera).';
+    }
+  }
+
+  function save() {
+    const a = document.createElement('a');
+    a.href = out.toDataURL('image/png');
+    a.download = 'slitcam_' + Date.now() + '.png';
+    a.click();
+  }
+
+  window.addEventListener('keydown', (e) => {
+    switch (e.key) {
+      case 'e': lungFascia = clamp(lungFascia + 10, 1, maxFascia()); break;
+      case 'r': lungFascia = clamp(lungFascia - 10, 1, maxFascia()); break;
+      case 'd': totalTime = Math.max(1, totalTime + 10); break;
+      case 'f': totalTime = Math.max(1, totalTime - 10); break;
+      case 'y': r = Math.min(255, r + 10); break;
+      case 'u': r = Math.max(0, r - 10); break;
+      case 'h': g = Math.min(255, g + 10); break;
+      case 'j': g = Math.max(0, g - 10); break;
+      case 'n': b = Math.min(255, b + 10); break;
+      case 'm': b = Math.max(0, b - 10); break;
+      case 's': save(); break;
+      case 'c': actx.fillStyle = '#fff'; actx.fillRect(0, 0, acc.width, acc.height); break;
+      default: return;
+    }
+    updateHud();
+  });
+
+  document.getElementById('start').addEventListener('click', start);
+  updateHud();
+})();
+</script>
+</body>
+</html>
