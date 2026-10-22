@@ -14,17 +14,17 @@
            display: flex; flex-wrap: wrap; gap: 10px 22px; align-items: center; }
   .group { display: flex; align-items: center; gap: 8px; }
   .group label { white-space: nowrap; }
-  .group output { min-width: 3.2em; text-align: right; font-variant-numeric: tabular-nums; }
+  .group output { min-width: 5.5em; text-align: right; font-variant-numeric: tabular-nums; }
   input[type=range] { width: 130px; }
+  input[type=number] { width: 6.5em; font-size: 14px; padding: 4px 6px; }
   select, button { font-size: 14px; padding: 5px 10px; }
   button { cursor: pointer; }
   button.primary { background: var(--accent); color: #fff; border: 1px solid var(--accent); border-radius: 4px; }
   button.primary.on { background: #b00; border-color: #b00; }
-  #swatch { width: 22px; height: 22px; border: 1px solid #888; border-radius: 3px; }
   #stage { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center;
            background: #e9e9e9; overflow: hidden; }
   canvas { max-width: 100%; max-height: 100%; background: #fff; }
-  video { display: none; }
+  video { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
   #status { padding: 4px 12px; font-size: 12px; color: #555; border-top: 1px solid var(--line); background: #f7f7f7; }
   #status.err { color: #b00; }
 </style>
@@ -52,9 +52,29 @@
   </div>
 
   <div class="group">
+    <label for="selRes">Risoluzione</label>
+    <select id="selRes">
+      <option value="1920x1080">1920×1080</option>
+      <option value="1280x720">1280×720</option>
+      <option value="640x480">640×480</option>
+    </select>
+    <label for="selFps">Fps richiesti</label>
+    <select id="selFps">
+      <option value="30">30</option>
+      <option value="60" selected>60</option>
+      <option value="120">120</option>
+    </select>
+  </div>
+
+  <div class="group">
+    <label for="numLen">Lunghezza immagine (px)</label>
+    <input id="numLen" type="number" min="200" max="16000" step="100" value="3000">
+  </div>
+
+  <div class="group">
     <label for="rngTime">Tempo (ms)</label>
-    <input id="rngTime" type="range" min="1" max="500" step="1" value="1">
-    <output id="outTime">1</output>
+    <input id="rngTime" type="range" min="0" max="500" step="1" value="0">
+    <output id="outTime">ogni frame</output>
   </div>
 
   <div class="group">
@@ -62,46 +82,36 @@
     <input id="rngFascia" type="range" min="1" max="200" step="1" value="1">
     <output id="outFascia">1</output>
   </div>
-
-  <div class="group">
-    <label for="rngR">R</label>
-    <input id="rngR" type="range" min="0" max="255" value="255"><output id="outR">255</output>
-    <label for="rngG">G</label>
-    <input id="rngG" type="range" min="0" max="255" value="255"><output id="outG">255</output>
-    <label for="rngB">B</label>
-    <input id="rngB" type="range" min="0" max="255" value="255"><output id="outB">255</output>
-    <span id="swatch" title="Tinta"></span>
-  </div>
 </div>
 
 <div id="stage"><canvas id="out" width="1200" height="400"></canvas></div>
-<div id="status">Pronto. Premi Avvia per attivare la fotocamera. Scorciatoie: spazio = avvia/arresta, s = salva, c = cancella.</div>
+<div id="status">Pronto. Premi Avvia per attivare la fotocamera. Scorciatoie: spazio = avvia/arresta, s = salva, c = cancella, e/r = fascia, d/f = tempo.</div>
 <video id="cam" playsinline muted></video>
 
 <script>
 (() => {
-  const BUF_LEN = 3000;            // lunghezza dell'immagine nella direzione di scorrimento
+  const MAX_LEN = 16000;            // limite pratico per la dimensione di un canvas
+  const MAX_AREA = 150e6;           // pixel totali massimi (prudenza per la memoria)
+  let len = 3000;                   // lunghezza dell'immagine nella direzione di scorrimento
 
   const $ = (id) => document.getElementById(id);
   const video = $('cam');
   const out = $('out');
   const ctx = out.getContext('2d');
-  const acc = document.createElement('canvas');   // immagine grezza, senza tinta
-  const actx = acc.getContext('2d');
 
   const ui = {
     start: $('btnStart'), clear: $('btnClear'), save: $('btnSave'),
-    cam: $('selCam'), mode: $('selMode'),
-    time: $('rngTime'), fascia: $('rngFascia'),
-    r: $('rngR'), g: $('rngG'), b: $('rngB'),
-    status: $('status'), swatch: $('swatch')
+    cam: $('selCam'), mode: $('selMode'), res: $('selRes'), fps: $('selFps'),
+    len: $('numLen'), time: $('rngTime'), fascia: $('rngFascia'), status: $('status')
   };
 
   let running = false;
   let stream = null;
-  let lastShift = 0;
-  let rafId = 0;
+  let lastShift = -1e9;
   let hasAlloc = false;
+  let token = 0;                    // invalida i cicli di acquisizione precedenti
+  let lastMediaTime = -1;
+  let frames = 0, steps = 0, tStat = 0;
 
   const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
   const val = (el) => parseInt(el.value, 10);
@@ -114,41 +124,51 @@
 
   // ---- parametri / interfaccia ------------------------------------------------
   function syncOutputs() {
-    $('outTime').textContent = ui.time.value;
+    const t = val(ui.time);
+    $('outTime').textContent = t === 0 ? 'ogni frame' : t;
     $('outFascia').textContent = ui.fascia.value;
-    $('outR').textContent = ui.r.value;
-    $('outG').textContent = ui.g.value;
-    $('outB').textContent = ui.b.value;
-    ui.swatch.style.background = `rgb(${ui.r.value},${ui.g.value},${ui.b.value})`;
   }
 
   // la fascia non può superare la dimensione della camera lungo la fessura
   function updateFasciaMax() {
     const span = isCol() ? (video.videoWidth || 200) : (video.videoHeight || 200);
-    const max = Math.max(1, Math.min(span, BUF_LEN - 1));
+    const max = Math.max(1, Math.min(span, len - 1));
     ui.fascia.max = max;
     if (val(ui.fascia) > max) ui.fascia.value = max;
     syncOutputs();
   }
 
-  // ---- buffer ----------------------------------------------------------------
+  function readLen() {
+    let v = parseInt(ui.len.value, 10);
+    if (!Number.isFinite(v)) v = len;
+    return clamp(v, 200, MAX_LEN);
+  }
+
+  // ---- buffer (un solo canvas: ciò che vedi è ciò che salvi) --------------------
   function neededSize() {
     const vw = video.videoWidth, vh = video.videoHeight;
-    return isCol() ? { w: BUF_LEN, h: vh } : { w: vw, h: BUF_LEN };
+    return isCol() ? { w: len, h: vh } : { w: vw, h: len };
   }
 
   function clearBuffer() {
-    actx.fillStyle = '#fff';
-    actx.fillRect(0, 0, acc.width, acc.height);
-    render();
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, out.width, out.height);
   }
 
   // riallocca solo se le dimensioni cambiano (altrimenti l'immagine continua)
   function allocate() {
-    const { w, h } = neededSize();
-    if (!hasAlloc || acc.width !== w || acc.height !== h) {
-      acc.width = out.width = w;
-      acc.height = out.height = h;
+    let { w, h } = neededSize();
+    // evita canvas troppo grandi per la memoria
+    if (w * h > MAX_AREA) {
+      const other = isCol() ? h : w;
+      len = Math.max(200, Math.floor(MAX_AREA / other));
+      ui.len.value = len;
+      ({ w, h } = neededSize());
+      setStatus('Lunghezza ridotta a ' + len + ' px per limiti di memoria.', true);
+    }
+    if (!hasAlloc || out.width !== w || out.height !== h) {
+      out.width = w;
+      out.height = h;
       hasAlloc = true;
       clearBuffer();
     }
@@ -160,38 +180,50 @@
     const f = val(ui.fascia);
     if (isCol()) {
       // sposta a destra e copia la nuova colonna centrale a sinistra
-      actx.drawImage(acc, 0, 0, BUF_LEN - f, vh, f, 0, BUF_LEN - f, vh);
+      ctx.drawImage(out, 0, 0, len - f, vh, f, 0, len - f, vh);
       const sx = Math.floor(vw / 2 - f / 2);
-      actx.drawImage(video, sx, 0, f, vh, 0, 0, f, vh);
+      ctx.drawImage(video, sx, 0, f, vh, 0, 0, f, vh);
     } else {
       // sposta in basso e copia la nuova riga centrale in alto
-      actx.drawImage(acc, 0, 0, vw, BUF_LEN - f, 0, f, vw, BUF_LEN - f);
+      ctx.drawImage(out, 0, 0, vw, len - f, 0, f, vw, len - f);
       const sy = Math.floor(vh / 2 - f / 2);
-      actx.drawImage(video, 0, sy, vw, f, 0, 0, vw, f);
+      ctx.drawImage(video, 0, sy, vw, f, 0, 0, vw, f);
     }
+    steps++;
   }
 
-  function render() {
-    if (!acc.width || !acc.height) return;
-    ctx.globalCompositeOperation = 'source-over';
-    ctx.drawImage(acc, 0, 0);
-    const r = val(ui.r), g = val(ui.g), b = val(ui.b);
-    if (r !== 255 || g !== 255 || b !== 255) {
-      ctx.globalCompositeOperation = 'multiply';    // come tint() di Processing
-      ctx.fillStyle = `rgb(${r},${g},${b})`;
-      ctx.fillRect(0, 0, out.width, out.height);
-      ctx.globalCompositeOperation = 'source-over';
-    }
-  }
-
-  function loop(now) {
-    if (!running) return;
-    if (video.readyState >= 2 && now - lastShift >= val(ui.time)) {
+  function onFrame(now, meta, myToken) {
+    if (!running || myToken !== token) return;
+    frames++;
+    if (now - lastShift >= val(ui.time)) {
       lastShift = now;
       step();
-      render();
     }
-    rafId = requestAnimationFrame(loop);
+    if (now - tStat >= 1000) {
+      const secs = (now - tStat) / 1000;
+      setStatus(`Acquisizione: ${video.videoWidth}×${video.videoHeight}, ` +
+                (isCol() ? 'colonna' : 'riga') +
+                ` — camera ${(frames / secs).toFixed(0)} fps, passi ${(steps / secs).toFixed(0)}/s.`);
+      frames = 0; steps = 0; tStat = now;
+    }
+    schedule(myToken);
+  }
+
+  // una acquisizione per ogni fotogramma reale della camera (niente righe duplicate)
+  function schedule(myToken) {
+    if (video.requestVideoFrameCallback) {
+      video.requestVideoFrameCallback((now, meta) => onFrame(now, meta, myToken));
+    } else {
+      requestAnimationFrame((now) => {
+        if (!running || myToken !== token) return;
+        if (video.readyState >= 2 && video.currentTime !== lastMediaTime) {
+          lastMediaTime = video.currentTime;
+          onFrame(now, null, myToken);
+        } else {
+          schedule(myToken);
+        }
+      });
+    }
   }
 
   // ---- fotocamera --------------------------------------------------------------
@@ -218,9 +250,15 @@
   }
 
   async function start() {
+    token++;
     stopStream();
     try {
-      const constraints = { audio: false, video: { width: { ideal: 1920 }, height: { ideal: 1080 } } };
+      const [rw, rh] = ui.res.value.split('x').map(Number);
+      const fps = parseInt(ui.fps.value, 10);
+      const constraints = {
+        audio: false,
+        video: { width: { ideal: rw }, height: { ideal: rh }, frameRate: { ideal: fps, min: 1 } }
+      };
       if (ui.cam.value) constraints.video.deviceId = { exact: ui.cam.value };
       stream = await navigator.mediaDevices.getUserMedia(constraints);
       video.srcObject = stream;
@@ -229,16 +267,19 @@
       const currentId = stream.getVideoTracks()[0].getSettings().deviceId;
       await listCameras(currentId);      // dopo il permesso le etichette sono disponibili
 
+      len = readLen();
+      ui.len.value = len;
       updateFasciaMax();
       allocate();
+
       running = true;
-      lastShift = 0;
+      lastShift = -1e9;
+      lastMediaTime = -1;
+      frames = 0; steps = 0; tStat = performance.now();
       ui.start.textContent = 'Arresta';
       ui.start.classList.add('on');
-      setStatus(`Acquisizione in corso: ${video.videoWidth}×${video.videoHeight}, ` +
-                (isCol() ? 'colonna' : 'riga') + '.');
-      cancelAnimationFrame(rafId);
-      rafId = requestAnimationFrame(loop);
+      setStatus('Acquisizione avviata…');
+      schedule(token);
     } catch (e) {
       running = false;
       ui.start.textContent = 'Avvia';
@@ -250,7 +291,7 @@
 
   function stop() {
     running = false;
-    cancelAnimationFrame(rafId);
+    token++;
     stopStream();                         // spegne la fotocamera, l'immagine resta
     ui.start.textContent = 'Avvia';
     ui.start.classList.remove('on');
@@ -258,8 +299,7 @@
   }
 
   function save() {
-    if (!acc.width) return;
-    render();
+    if (!hasAlloc) return;
     const a = document.createElement('a');
     a.href = out.toDataURL('image/png');
     a.download = 'slitcam_' + Date.now() + '.png';
@@ -268,13 +308,26 @@
 
   // ---- eventi ------------------------------------------------------------------
   ui.start.addEventListener('click', () => running ? stop() : start());
-  ui.clear.addEventListener('click', () => { if (acc.width) clearBuffer(); });
+  ui.clear.addEventListener('click', () => { if (hasAlloc) clearBuffer(); });
   ui.save.addEventListener('click', save);
 
-  [ui.time, ui.fascia, ui.r, ui.g, ui.b].forEach(el =>
-    el.addEventListener('input', () => { syncOutputs(); if (!running) render(); }));
+  [ui.time, ui.fascia].forEach(el => el.addEventListener('input', syncOutputs));
 
-  ui.cam.addEventListener('change', () => { if (running) start(); });
+  // cambio camera, risoluzione o fps: riavvia il flusso se è attivo
+  [ui.cam, ui.res, ui.fps].forEach(el => el.addEventListener('change', () => { if (running) start(); }));
+
+  ui.len.addEventListener('change', () => {
+    len = readLen();
+    ui.len.value = len;
+    updateFasciaMax();
+    if (running) {
+      allocate();                         // nuova lunghezza: l'immagine riparte da zero
+      setStatus('Lunghezza impostata a ' + len + ' px (immagine azzerata).');
+    } else {
+      hasAlloc = false;                   // verrà riallocato al prossimo avvio
+      setStatus('Lunghezza impostata a ' + len + ' px: si applica al prossimo avvio.');
+    }
+  });
 
   ui.mode.addEventListener('change', () => {
     updateFasciaMax();
@@ -282,32 +335,26 @@
       allocate();                         // nuove dimensioni: l'immagine riparte da zero
       setStatus('Modalità cambiata: ' + (isCol() ? 'colonna' : 'riga') + '.');
     } else {
-      hasAlloc = false;                   // verrà riallocato al prossimo avvio
+      hasAlloc = false;
     }
   });
 
   window.addEventListener('keydown', (e) => {
     const t = e.target.tagName;
-    if (t === 'SELECT') return;
-    const bump = (el, d) => { el.value = clamp(val(el) + d, +el.min, +el.max); el.dispatchEvent(new Event('input')); };
+    if (t === 'SELECT' || t === 'INPUT' && e.target.type === 'number') return;
+    const bump = (el, d) => { el.value = clamp(val(el) + d, +el.min, +el.max); syncOutputs(); };
     switch (e.key) {
       case ' ': if (t !== 'BUTTON') { e.preventDefault(); running ? stop() : start(); } return;
       case 'e': bump(ui.fascia, 10); break;
       case 'r': bump(ui.fascia, -10); break;
       case 'd': bump(ui.time, 10); break;
       case 'f': bump(ui.time, -10); break;
-      case 'y': bump(ui.r, 10); break;
-      case 'u': bump(ui.r, -10); break;
-      case 'h': bump(ui.g, 10); break;
-      case 'j': bump(ui.g, -10); break;
-      case 'n': bump(ui.b, 10); break;
-      case 'm': bump(ui.b, -10); break;
       case 's': save(); break;
-      case 'c': if (acc.width) clearBuffer(); break;
+      case 'c': if (hasAlloc) clearBuffer(); break;
     }
   });
 
-  // se la camera cambia durante la sessione (collegamento/scollegamento)
+  // se le camere cambiano durante la sessione (collegamento/scollegamento)
   if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
     navigator.mediaDevices.addEventListener('devicechange', () => listCameras(ui.cam.value));
   }
