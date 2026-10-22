@@ -16,6 +16,9 @@
   .group label { white-space: nowrap; }
   .group output { min-width: 5.5em; text-align: right; font-variant-numeric: tabular-nums; }
   input[type=range] { width: 130px; }
+  input#rngFascia { width: 340px; }      /* più lunga = più precisa */
+  button.step { padding: 3px 9px; font-weight: bold; }
+  input#numFascia { width: 5em; }
   input[type=number] { width: 6.5em; font-size: 14px; padding: 4px 6px; }
   select, button { font-size: 14px; padding: 5px 10px; }
   button { cursor: pointer; }
@@ -79,8 +82,10 @@
 
   <div class="group">
     <label for="rngFascia">Fascia (px)</label>
+    <button id="btnFMinus" class="step" title="Fascia −1">−</button>
     <input id="rngFascia" type="range" min="1" max="200" step="1" value="1">
-    <output id="outFascia">1</output>
+    <button id="btnFPlus" class="step" title="Fascia +1">+</button>
+    <input id="numFascia" type="number" min="1" max="200" step="1" value="1" title="Scrivi il valore e premi Invio">
   </div>
 </div>
 
@@ -102,7 +107,8 @@
   const ui = {
     start: $('btnStart'), clear: $('btnClear'), save: $('btnSave'),
     cam: $('selCam'), mode: $('selMode'), res: $('selRes'), fps: $('selFps'),
-    len: $('numLen'), time: $('rngTime'), fascia: $('rngFascia'), status: $('status')
+    len: $('numLen'), time: $('rngTime'), fascia: $('rngFascia'), status: $('status'),
+    fasciaNum: $('numFascia'), fMinus: $('btnFMinus'), fPlus: $('btnFPlus')
   };
 
   let running = false;
@@ -126,7 +132,15 @@
   function syncOutputs() {
     const t = val(ui.time);
     $('outTime').textContent = t === 0 ? 'ogni frame' : t;
-    $('outFascia').textContent = ui.fascia.value;
+    // non riscrivere il campo mentre l'utente ci sta scrivendo
+    if (document.activeElement !== ui.fasciaNum) ui.fasciaNum.value = ui.fascia.value;
+  }
+
+  // imposta la fascia (da cursore, tastiera o pulsanti) rispettando i limiti
+  function setFascia(v) {
+    if (!Number.isFinite(v)) return;
+    ui.fascia.value = clamp(Math.round(v), 1, +ui.fascia.max);
+    syncOutputs();
   }
 
   // la fascia non può superare la dimensione della camera lungo la fessura
@@ -134,6 +148,7 @@
     const span = isCol() ? (video.videoWidth || 200) : (video.videoHeight || 200);
     const max = Math.max(1, Math.min(span, len - 1));
     ui.fascia.max = max;
+    ui.fasciaNum.max = max;
     if (val(ui.fascia) > max) ui.fascia.value = max;
     syncOutputs();
   }
@@ -312,6 +327,22 @@
   ui.save.addEventListener('click', save);
 
   [ui.time, ui.fascia].forEach(el => el.addEventListener('input', syncOutputs));
+
+  // fascia da tastiera: vale subito mentre scrivi, si normalizza a fine modifica
+  ui.fasciaNum.addEventListener('input', () => {
+    const v = parseInt(ui.fasciaNum.value, 10);
+    if (Number.isFinite(v) && v >= 1) setFascia(v);
+  });
+  ui.fasciaNum.addEventListener('change', () => {
+    const v = parseInt(ui.fasciaNum.value, 10);
+    setFascia(Number.isFinite(v) ? v : val(ui.fascia));
+    ui.fasciaNum.value = ui.fascia.value;
+  });
+  ui.fasciaNum.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') ui.fasciaNum.blur();
+  });
+  ui.fMinus.addEventListener('click', () => setFascia(val(ui.fascia) - 1));
+  ui.fPlus.addEventListener('click', () => setFascia(val(ui.fascia) + 1));
 
   // cambio camera, risoluzione o fps: riavvia il flusso se è attivo
   [ui.cam, ui.res, ui.fps].forEach(el => el.addEventListener('change', () => { if (running) start(); }));
