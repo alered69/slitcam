@@ -5,31 +5,37 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>SlitCam</title>
 <style>
-  :root { --bg:#fff; --fg:#111; --line:#ccc; --accent:#111; }
+  :root { color-scheme: dark; --bg:#121212; --panel:#1b1b1e; --stage:#0b0b0c; --fg:#e6e6e6;
+          --muted:#9a9aa2; --line:#33343b; --field:#26272c; --accent:#e6e6e6; }
   * { box-sizing: border-box; }
   html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg);
                font-family: Arial, sans-serif; font-size: 14px; }
   body { display: flex; flex-direction: column; }
-  #panel { padding: 8px 12px; border-bottom: 1px solid var(--line); background: #f7f7f7;
+  #panel { padding: 8px 12px; border-bottom: 1px solid var(--line); background: var(--panel);
            display: flex; flex-wrap: wrap; gap: 10px 22px; align-items: center; }
   .group { display: flex; align-items: center; gap: 8px; }
   .group label { white-space: nowrap; }
   .group output { min-width: 5.5em; text-align: right; font-variant-numeric: tabular-nums; }
   input[type=range] { width: 130px; }
-  input#rngFascia { width: 340px; }      /* più lunga = più precisa */
   button.step { padding: 3px 9px; font-weight: bold; }
   input#numFascia { width: 5em; }
   input[type=number] { width: 6.5em; font-size: 14px; padding: 4px 6px; }
+  select, button, input[type=number] { background: var(--field); color: var(--fg);
+                                       border: 1px solid var(--line); border-radius: 4px; }
   select, button { font-size: 14px; padding: 5px 10px; }
+  button:hover, select:hover { border-color: #66676f; }
+  input[type=color] { width: 44px; height: 28px; padding: 2px; cursor: pointer;
+                      background: var(--field); border: 1px solid var(--line); border-radius: 4px; }
+  input[type=range] { accent-color: #c9c9d1; }
   button { cursor: pointer; }
-  button.primary { background: var(--accent); color: #fff; border: 1px solid var(--accent); border-radius: 4px; }
-  button.primary.on { background: #b00; border-color: #b00; }
+  button.primary { background: var(--accent); color: #111; border: 1px solid var(--accent); border-radius: 4px; }
+  button.primary.on { background: #c0392b; border-color: #c0392b; color: #fff; }
   #stage { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center;
-           background: #e9e9e9; overflow: hidden; }
-  canvas { max-width: 100%; max-height: 100%; background: #fff; }
+           background: var(--stage); overflow: hidden; }
+  canvas { max-width: 100%; max-height: 100%; background: #000; }
   video { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
-  #status { padding: 4px 12px; font-size: 12px; color: #555; border-top: 1px solid var(--line); background: #f7f7f7; }
-  #status.err { color: #b00; }
+  #status { padding: 4px 12px; font-size: 12px; color: var(--muted); border-top: 1px solid var(--line); background: var(--panel); }
+  #status.err { color: #ff7b72; }
 </style>
 </head>
 <body>
@@ -82,11 +88,15 @@
   </div>
 
   <div class="group">
-    <label for="rngFascia">Fascia (px)</label>
+    <label for="numFascia">Fascia (px)</label>
     <button id="btnFMinus" class="step" title="Fascia −1">−</button>
-    <input id="rngFascia" type="range" min="1" max="200" step="1" value="1">
-    <button id="btnFPlus" class="step" title="Fascia +1">+</button>
     <input id="numFascia" type="number" min="1" max="200" step="1" value="1" title="Scrivi il valore e premi Invio">
+    <button id="btnFPlus" class="step" title="Fascia +1">+</button>
+  </div>
+
+  <div class="group">
+    <label for="colBg">Sfondo</label>
+    <input id="colBg" type="color" value="#000000" title="Colore dello sfondo (si applica con Cancella)">
   </div>
 </div>
 
@@ -108,14 +118,15 @@
   const ui = {
     start: $('btnStart'), clear: $('btnClear'), save: $('btnSave'),
     cam: $('selCam'), mode: $('selMode'), res: $('selRes'), fps: $('selFps'),
-    len: $('numLen'), time: $('rngTime'), fascia: $('rngFascia'), status: $('status'),
-    fasciaNum: $('numFascia'), fMinus: $('btnFMinus'), fPlus: $('btnFPlus')
+    len: $('numLen'), time: $('rngTime'), fascia: $('numFascia'), status: $('status'),
+    fMinus: $('btnFMinus'), fPlus: $('btnFPlus'), bg: $('colBg')
   };
 
   let running = false;
   let stream = null;
   let lastShift = -1e9;
   let hasAlloc = false;
+  let hasContent = false;           // true dopo la prima acquisizione dall'ultima pulizia
   let token = 0;                    // invalida i cicli di acquisizione precedenti
   let lastMediaTime = -1;
   let frames = 0, steps = 0, tStat = 0;
@@ -133,15 +144,18 @@
   function syncOutputs() {
     const t = val(ui.time);
     $('outTime').textContent = t === 0 ? 'ogni frame' : t;
-    // non riscrivere il campo mentre l'utente ci sta scrivendo
-    if (document.activeElement !== ui.fasciaNum) ui.fasciaNum.value = ui.fascia.value;
   }
 
-  // imposta la fascia (da cursore, tastiera o pulsanti) rispettando i limiti
+  // valore valido della fascia, anche mentre l'utente sta ancora scrivendo
+  function getFascia() {
+    const v = parseInt(ui.fascia.value, 10);
+    return clamp(Number.isFinite(v) ? v : 1, 1, +ui.fascia.max || 1);
+  }
+
+  // imposta la fascia (da tastiera o pulsanti) rispettando i limiti
   function setFascia(v) {
     if (!Number.isFinite(v)) return;
     ui.fascia.value = clamp(Math.round(v), 1, +ui.fascia.max);
-    syncOutputs();
   }
 
   // la fascia non può superare la dimensione della camera lungo la fessura
@@ -149,7 +163,6 @@
     const span = isCol() ? (video.videoWidth || 200) : (video.videoHeight || 200);
     const max = Math.max(1, Math.min(span, len - 1));
     ui.fascia.max = max;
-    ui.fasciaNum.max = max;
     if (val(ui.fascia) > max) ui.fascia.value = max;
     syncOutputs();
   }
@@ -167,8 +180,10 @@
   }
 
   function clearBuffer() {
-    ctx.fillStyle = '#fff';
+    ctx.fillStyle = ui.bg.value;
     ctx.fillRect(0, 0, out.width, out.height);
+    out.style.background = ui.bg.value;
+    hasContent = false;
   }
 
   // riallocca solo se le dimensioni cambiano (altrimenti l'immagine continua)
@@ -193,7 +208,7 @@
   // ---- acquisizione ------------------------------------------------------------
   function step() {
     const vw = video.videoWidth, vh = video.videoHeight;
-    const f = val(ui.fascia);
+    const f = getFascia();
     if (isCol()) {
       // sposta a destra e copia la nuova colonna centrale a sinistra
       ctx.drawImage(out, 0, 0, len - f, vh, f, 0, len - f, vh);
@@ -206,6 +221,7 @@
       ctx.drawImage(video, 0, sy, vw, f, 0, 0, vw, f);
     }
     steps++;
+    hasContent = true;
   }
 
   function onFrame(now, meta, myToken) {
@@ -393,23 +409,20 @@
   ui.clear.addEventListener('click', () => { if (hasAlloc) clearBuffer(); });
   ui.save.addEventListener('click', save);
 
-  [ui.time, ui.fascia].forEach(el => el.addEventListener('input', syncOutputs));
+  ui.time.addEventListener('input', syncOutputs);
 
-  // fascia da tastiera: vale subito mentre scrivi, si normalizza a fine modifica
-  ui.fasciaNum.addEventListener('input', () => {
-    const v = parseInt(ui.fasciaNum.value, 10);
-    if (Number.isFinite(v) && v >= 1) setFascia(v);
+  // sfondo: se l'immagine è ancora vuota si applica subito, altrimenti alla prossima pulizia
+  ui.bg.addEventListener('input', () => {
+    out.style.background = ui.bg.value;
+    if (hasAlloc && !hasContent) clearBuffer();
+    else if (hasAlloc) setStatus('Sfondo cambiato: si applica con Cancella (l\'immagine esistente non cambia).');
   });
-  ui.fasciaNum.addEventListener('change', () => {
-    const v = parseInt(ui.fasciaNum.value, 10);
-    setFascia(Number.isFinite(v) ? v : val(ui.fascia));
-    ui.fasciaNum.value = ui.fascia.value;
-  });
-  ui.fasciaNum.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') ui.fasciaNum.blur();
-  });
-  ui.fMinus.addEventListener('click', () => setFascia(val(ui.fascia) - 1));
-  ui.fPlus.addEventListener('click', () => setFascia(val(ui.fascia) + 1));
+
+  // fascia: l'acquisizione usa il valore subito mentre scrivi; a fine modifica il campo si normalizza
+  ui.fascia.addEventListener('change', () => setFascia(getFascia()));
+  ui.fascia.addEventListener('keydown', (e) => { if (e.key === 'Enter') ui.fascia.blur(); });
+  ui.fMinus.addEventListener('click', () => setFascia(getFascia() - 1));
+  ui.fPlus.addEventListener('click', () => setFascia(getFascia() + 1));
 
   // cambio camera, risoluzione o fps: riavvia il flusso se è attivo
   [ui.cam, ui.res, ui.fps].forEach(el => el.addEventListener('change', () => { if (running) start(); }));
@@ -439,12 +452,12 @@
 
   window.addEventListener('keydown', (e) => {
     const t = e.target.tagName;
-    if (t === 'SELECT' || t === 'INPUT' && e.target.type === 'number') return;
+    if (t === 'SELECT' || t === 'INPUT' && (e.target.type === 'number' || e.target.type === 'color')) return;
     const bump = (el, d) => { el.value = clamp(val(el) + d, +el.min, +el.max); syncOutputs(); };
     switch (e.key) {
       case ' ': if (t !== 'BUTTON') { e.preventDefault(); running ? stop() : start(); } return;
-      case 'e': bump(ui.fascia, 10); break;
-      case 'r': bump(ui.fascia, -10); break;
+      case 'e': setFascia(getFascia() + 10); break;
+      case 'r': setFascia(getFascia() - 10); break;
       case 'd': bump(ui.time, 10); break;
       case 'f': bump(ui.time, -10); break;
       case 's': save(); break;
