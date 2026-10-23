@@ -5,145 +5,460 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>SlitCam</title>
 <style>
-  html, body { margin: 0; height: 100%; background: #fff; font-family: Arial, sans-serif; }
-  #hud { position: fixed; top: 0; left: 0; right: 0; padding: 6px 12px; background: rgba(255,255,255,.85);
-         font-size: 14px; display: flex; gap: 24px; flex-wrap: wrap; z-index: 2; }
-  #help { position: fixed; bottom: 0; left: 0; right: 0; padding: 6px 12px; background: rgba(255,255,255,.85);
-          font-size: 12px; color: #444; z-index: 2; }
-  canvas { display: block; width: 100%; height: auto; margin-top: 30px; }
-  video { display: none; }
-  #msg { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
-         font-size: 18px; text-align: center; padding: 24px; z-index: 3; background: #fff; }
-  #msg.hidden { display: none; }
-  button { font-size: 16px; padding: 8px 16px; }
+  :root { --bg:#fff; --fg:#111; --line:#ccc; --accent:#111; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg);
+               font-family: Arial, sans-serif; font-size: 14px; }
+  body { display: flex; flex-direction: column; }
+  #panel { padding: 8px 12px; border-bottom: 1px solid var(--line); background: #f7f7f7;
+           display: flex; flex-wrap: wrap; gap: 10px 22px; align-items: center; }
+  .group { display: flex; align-items: center; gap: 8px; }
+  .group label { white-space: nowrap; }
+  .group output { min-width: 5.5em; text-align: right; font-variant-numeric: tabular-nums; }
+  input[type=range] { width: 130px; }
+  input#rngFascia { width: 340px; }      /* più lunga = più precisa */
+  button.step { padding: 3px 9px; font-weight: bold; }
+  input#numFascia { width: 5em; }
+  input[type=number] { width: 6.5em; font-size: 14px; padding: 4px 6px; }
+  select, button { font-size: 14px; padding: 5px 10px; }
+  button { cursor: pointer; }
+  button.primary { background: var(--accent); color: #fff; border: 1px solid var(--accent); border-radius: 4px; }
+  button.primary.on { background: #b00; border-color: #b00; }
+  #stage { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center;
+           background: #e9e9e9; overflow: hidden; }
+  canvas { max-width: 100%; max-height: 100%; background: #fff; }
+  video { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+  #status { padding: 4px 12px; font-size: 12px; color: #555; border-top: 1px solid var(--line); background: #f7f7f7; }
+  #status.err { color: #b00; }
 </style>
 </head>
 <body>
-<div id="hud">
-  <span id="tTime"></span><span id="tFascia"></span><span id="tRGB"></span>
+
+<div id="panel">
+  <div class="group">
+    <button id="btnStart" class="primary">Avvia</button>
+    <button id="btnClear">Cancella</button>
+    <button id="btnSave">Salva PNG</button>
+  </div>
+
+  <div class="group">
+    <label for="selCam">Fotocamera</label>
+    <select id="selCam"><option value="">Predefinita</option></select>
+  </div>
+
+  <div class="group">
+    <label for="selMode">Acquisizione</label>
+    <select id="selMode">
+      <option value="col">Colonna (fessura verticale, scorre in orizzontale)</option>
+      <option value="row">Riga (fessura orizzontale, scorre in verticale)</option>
+    </select>
+  </div>
+
+  <div class="group">
+    <label for="selRes">Risoluzione</label>
+    <select id="selRes">
+      <option value="max">Massima disponibile</option>
+      <option value="1920x1080" selected>1920×1080</option>
+      <option value="1280x720">1280×720</option>
+      <option value="640x480">640×480</option>
+    </select>
+    <label for="selFps">Fps richiesti</label>
+    <select id="selFps">
+      <option value="30">30</option>
+      <option value="60" selected>60</option>
+      <option value="120">120</option>
+    </select>
+  </div>
+
+  <div class="group">
+    <label for="numLen">Lunghezza immagine (px)</label>
+    <input id="numLen" type="number" min="200" max="16000" step="100" value="3000">
+  </div>
+
+  <div class="group">
+    <label for="rngTime">Tempo (ms)</label>
+    <input id="rngTime" type="range" min="0" max="500" step="1" value="0">
+    <output id="outTime">ogni frame</output>
+  </div>
+
+  <div class="group">
+    <label for="rngFascia">Fascia (px)</label>
+    <button id="btnFMinus" class="step" title="Fascia −1">−</button>
+    <input id="rngFascia" type="range" min="1" max="200" step="1" value="1">
+    <button id="btnFPlus" class="step" title="Fascia +1">+</button>
+    <input id="numFascia" type="number" min="1" max="200" step="1" value="1" title="Scrivi il valore e premi Invio">
+  </div>
 </div>
-<div id="msg"><div>
-  <p>SlitCam: lo scorrimento della fessura centrale della webcam.</p>
-  <button id="start">Avvia webcam</button>
-  <p id="err" style="color:#b00"></p>
-</div></div>
-<div id="help">
-  e / r: fascia +/- 10 px &nbsp;|&nbsp; d / f: tempo +/- 10 ms &nbsp;|&nbsp; y/u: rosso +/- &nbsp;|&nbsp;
-  h/j: verde +/- &nbsp;|&nbsp; n/m: blu +/- &nbsp;|&nbsp; s: salva PNG &nbsp;|&nbsp; c: pulisci
-</div>
+
+<div id="stage"><canvas id="out" width="1200" height="400"></canvas></div>
+<div id="status">Pronto. Premi Avvia per attivare la fotocamera. Scorciatoie: spazio = avvia/arresta, s = salva, c = cancella, e/r = fascia, d/f = tempo.</div>
 <video id="cam" playsinline muted></video>
-<canvas id="out"></canvas>
 
 <script>
 (() => {
-  const BUF_W = 3000;               // larghezza dell'immagine accumulata
-  let totalTime = 1;                // ms tra uno spostamento e il successivo
-  let lungFascia = 1;               // larghezza della fessura in px
-  let r = 255, g = 255, b = 255;    // tinta
+  const MAX_LEN = 16000;            // limite pratico per la dimensione di un canvas
+  const MAX_AREA = 150e6;           // pixel totali massimi (prudenza per la memoria)
+  let len = 3000;                   // lunghezza dell'immagine nella direzione di scorrimento
 
-  const video = document.getElementById('cam');
-  const out = document.getElementById('out');
+  const $ = (id) => document.getElementById(id);
+  const video = $('cam');
+  const out = $('out');
   const ctx = out.getContext('2d');
-  const acc = document.createElement('canvas');   // immagine grezza accumulata (senza tinta)
-  const actx = acc.getContext('2d');
-  let lastShift = performance.now();
+
+  const ui = {
+    start: $('btnStart'), clear: $('btnClear'), save: $('btnSave'),
+    cam: $('selCam'), mode: $('selMode'), res: $('selRes'), fps: $('selFps'),
+    len: $('numLen'), time: $('rngTime'), fascia: $('rngFascia'), status: $('status'),
+    fasciaNum: $('numFascia'), fMinus: $('btnFMinus'), fPlus: $('btnFPlus')
+  };
+
   let running = false;
+  let stream = null;
+  let lastShift = -1e9;
+  let hasAlloc = false;
+  let token = 0;                    // invalida i cicli di acquisizione precedenti
+  let lastMediaTime = -1;
+  let frames = 0, steps = 0, tStat = 0;
 
   const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+  const val = (el) => parseInt(el.value, 10);
+  const isCol = () => ui.mode.value === 'col';
 
-  function maxFascia() {
-    const vw = video.videoWidth || 1;
-    return Math.max(1, Math.min(vw, BUF_W - 1));
+  function setStatus(msg, isErr) {
+    ui.status.textContent = msg;
+    ui.status.className = isErr ? 'err' : '';
   }
 
-  function updateHud() {
-    document.getElementById('tTime').textContent = 'Tempo (ms): ' + totalTime;
-    document.getElementById('tFascia').textContent = 'Fascia (px): ' + lungFascia;
-    document.getElementById('tRGB').textContent = 'Colore RGB: ' + r + ' ' + g + ' ' + b;
+  // ---- parametri / interfaccia ------------------------------------------------
+  function syncOutputs() {
+    const t = val(ui.time);
+    $('outTime').textContent = t === 0 ? 'ogni frame' : t;
+    // non riscrivere il campo mentre l'utente ci sta scrivendo
+    if (document.activeElement !== ui.fasciaNum) ui.fasciaNum.value = ui.fascia.value;
   }
 
-  function step() {
+  // imposta la fascia (da cursore, tastiera o pulsanti) rispettando i limiti
+  function setFascia(v) {
+    if (!Number.isFinite(v)) return;
+    ui.fascia.value = clamp(Math.round(v), 1, +ui.fascia.max);
+    syncOutputs();
+  }
+
+  // la fascia non può superare la dimensione della camera lungo la fessura
+  function updateFasciaMax() {
+    const span = isCol() ? (video.videoWidth || 200) : (video.videoHeight || 200);
+    const max = Math.max(1, Math.min(span, len - 1));
+    ui.fascia.max = max;
+    ui.fasciaNum.max = max;
+    if (val(ui.fascia) > max) ui.fascia.value = max;
+    syncOutputs();
+  }
+
+  function readLen() {
+    let v = parseInt(ui.len.value, 10);
+    if (!Number.isFinite(v)) v = len;
+    return clamp(v, 200, MAX_LEN);
+  }
+
+  // ---- buffer (un solo canvas: ciò che vedi è ciò che salvi) --------------------
+  function neededSize() {
     const vw = video.videoWidth, vh = video.videoHeight;
-    // sposta tutto a destra di lungFascia, poi copia la nuova fessura a sinistra
-    actx.drawImage(acc, 0, 0, BUF_W - lungFascia, vh, lungFascia, 0, BUF_W - lungFascia, vh);
-    const sx = Math.floor(vw / 2 - lungFascia / 2);
-    actx.drawImage(video, sx, 0, lungFascia, vh, 0, 0, lungFascia, vh);
+    return isCol() ? { w: len, h: vh } : { w: vw, h: len };
   }
 
-  function render() {
-    ctx.globalCompositeOperation = 'source-over';
-    ctx.drawImage(acc, 0, 0);
-    if (r !== 255 || g !== 255 || b !== 255) {
-      ctx.globalCompositeOperation = 'multiply';   // equivalente a tint() di Processing
-      ctx.fillStyle = `rgb(${r},${g},${b})`;
-      ctx.fillRect(0, 0, out.width, out.height);
-      ctx.globalCompositeOperation = 'source-over';
+  function clearBuffer() {
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, out.width, out.height);
+  }
+
+  // riallocca solo se le dimensioni cambiano (altrimenti l'immagine continua)
+  function allocate() {
+    let { w, h } = neededSize();
+    // evita canvas troppo grandi per la memoria
+    if (w * h > MAX_AREA) {
+      const other = isCol() ? h : w;
+      len = Math.max(200, Math.floor(MAX_AREA / other));
+      ui.len.value = len;
+      ({ w, h } = neededSize());
+      setStatus('Lunghezza ridotta a ' + len + ' px per limiti di memoria.', true);
+    }
+    if (!hasAlloc || out.width !== w || out.height !== h) {
+      out.width = w;
+      out.height = h;
+      hasAlloc = true;
+      clearBuffer();
     }
   }
 
-  function loop(now) {
-    if (!running) return;
-    if (video.readyState >= 2 && now - lastShift >= totalTime) {
+  // ---- acquisizione ------------------------------------------------------------
+  function step() {
+    const vw = video.videoWidth, vh = video.videoHeight;
+    const f = val(ui.fascia);
+    if (isCol()) {
+      // sposta a destra e copia la nuova colonna centrale a sinistra
+      ctx.drawImage(out, 0, 0, len - f, vh, f, 0, len - f, vh);
+      const sx = Math.floor(vw / 2 - f / 2);
+      ctx.drawImage(video, sx, 0, f, vh, 0, 0, f, vh);
+    } else {
+      // sposta in basso e copia la nuova riga centrale in alto
+      ctx.drawImage(out, 0, 0, vw, len - f, 0, f, vw, len - f);
+      const sy = Math.floor(vh / 2 - f / 2);
+      ctx.drawImage(video, 0, sy, vw, f, 0, 0, vw, f);
+    }
+    steps++;
+  }
+
+  function onFrame(now, meta, myToken) {
+    if (!running || myToken !== token) return;
+    frames++;
+    if (now - lastShift >= val(ui.time)) {
       lastShift = now;
       step();
     }
-    render();
-    requestAnimationFrame(loop);
+    if (now - tStat >= 1000) {
+      const secs = (now - tStat) / 1000;
+      setStatus(`Acquisizione: ${video.videoWidth}×${video.videoHeight}, ` +
+                (isCol() ? 'colonna' : 'riga') +
+                ` — camera ${(frames / secs).toFixed(0)} fps, passi ${(steps / secs).toFixed(0)}/s.`);
+      frames = 0; steps = 0; tStat = now;
+    }
+    schedule(myToken);
   }
 
-  async function start() {
-    const err = document.getElementById('err');
-    err.textContent = '';
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false
+  // una acquisizione per ogni fotogramma reale della camera (niente righe duplicate)
+  function schedule(myToken) {
+    if (video.requestVideoFrameCallback) {
+      video.requestVideoFrameCallback((now, meta) => onFrame(now, meta, myToken));
+    } else {
+      requestAnimationFrame((now) => {
+        if (!running || myToken !== token) return;
+        if (video.readyState >= 2 && video.currentTime !== lastMediaTime) {
+          lastMediaTime = video.currentTime;
+          onFrame(now, null, myToken);
+        } else {
+          schedule(myToken);
+        }
       });
-      video.srcObject = stream;
-      await video.play();
-      // le dimensioni reali arrivano dalla camera, non da valori fissi
-      const vh = video.videoHeight;
-      out.width = acc.width = BUF_W;
-      out.height = acc.height = vh;
-      actx.fillStyle = '#fff'; actx.fillRect(0, 0, BUF_W, vh);
-      lungFascia = clamp(lungFascia, 1, maxFascia());
-      document.getElementById('msg').classList.add('hidden');
-      updateHud();
-      running = true;
-      requestAnimationFrame(loop);
-    } catch (e) {
-      err.textContent = 'Impossibile accedere alla webcam: ' + e.message +
-        ' (serve https o localhost, e il permesso della camera).';
     }
   }
 
+  // ---- fotocamera --------------------------------------------------------------
+  async function listCameras(currentId) {
+    try {
+      const devs = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'videoinput');
+      const prev = ui.cam.value;
+      ui.cam.innerHTML = '';
+      devs.forEach((d, i) => {
+        const o = document.createElement('option');
+        o.value = d.deviceId;
+        o.textContent = d.label || ('Fotocamera ' + (i + 1));
+        ui.cam.appendChild(o);
+      });
+      if (!devs.length) ui.cam.innerHTML = '<option value="">Nessuna fotocamera</option>';
+      ui.cam.value = currentId || prev;
+      if (ui.cam.value !== (currentId || prev) && devs.length) ui.cam.selectedIndex = 0;
+    } catch (e) { /* elenco non disponibile: resta "Predefinita" */ }
+  }
+
+  // ---- risoluzioni supportate ----------------------------------------------------
+  // I browser non elencano le risoluzioni: si provano quelle standard e si tengono quelle accettate.
+  const resCache = new Map();           // deviceId -> [[w, h], ...]
+  const LADDER = [[7680,4320],[5120,2880],[4096,3072],[4096,2160],[3840,2160],[4032,3024],[3264,2448],
+                  [2592,1944],[2560,1440],[2048,1536],[1920,1080],[1600,1200],[1280,960],[1280,720],
+                  [1024,768],[800,600],[640,480],[320,240]];
+
+  async function probeResolutions(track) {
+    const cap = track.getCapabilities ? track.getCapabilities() : null;
+    const found = [];
+    for (const [w, h] of LADDER) {
+      if (cap && cap.width && cap.height &&
+          (w > cap.width.max || w < cap.width.min || h > cap.height.max || h < cap.height.min)) continue;
+      try {
+        await track.applyConstraints({ width: { exact: w }, height: { exact: h } });
+        const s = track.getSettings();
+        if (s.width && s.height && !found.some(([fw, fh]) => fw === s.width && fh === s.height)) {
+          found.push([s.width, s.height]);
+        }
+      } catch (e) { /* risoluzione non supportata */ }
+    }
+    return found.sort((a, b) => b[0] * b[1] - a[0] * a[1]);
+  }
+
+  function fillResolutions(list) {
+    const keep = ui.res.value;
+    ui.res.innerHTML = '<option value="max">Massima disponibile</option>';
+    list.forEach(([w, h]) => {
+      const o = document.createElement('option');
+      o.value = w + 'x' + h;
+      o.textContent = `${w}×${h} (${(w * h / 1e6).toFixed(1)} MP)`;
+      ui.res.appendChild(o);
+    });
+    ui.res.value = [...ui.res.options].some(o => o.value === keep) ? keep : 'max';
+  }
+
+  async function applyResolution(track, resValue, fps) {
+    try {
+      if (resValue === 'max') {
+        const cap = track.getCapabilities ? track.getCapabilities() : null;
+        if (cap && cap.width && cap.height) {
+          await track.applyConstraints({
+            width: { ideal: cap.width.max }, height: { ideal: cap.height.max }, frameRate: { ideal: fps }
+          });
+        }
+      } else {
+        const [w, h] = resValue.split('x').map(Number);
+        await track.applyConstraints({ width: { exact: w }, height: { exact: h }, frameRate: { ideal: fps } });
+      }
+    } catch (e) { /* si resta con la risoluzione già ottenuta */ }
+  }
+
+  function stopStream() {
+    if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+    video.srcObject = null;
+  }
+
+  async function start() {
+    token++;
+    stopStream();
+    try {
+      const isMax = ui.res.value === 'max';
+      // "massima": si chiede un valore enorme, il browser sceglie la modalità più alta che la camera offre
+      const [rw, rh] = isMax ? [7680, 4320] : ui.res.value.split('x').map(Number);
+      const fps = parseInt(ui.fps.value, 10);
+      const constraints = {
+        audio: false,
+        video: { width: { ideal: rw }, height: { ideal: rh }, frameRate: { ideal: fps, min: 1 } }
+      };
+      if (ui.cam.value) constraints.video.deviceId = { exact: ui.cam.value };
+      stream = await navigator.mediaDevices.getUserMedia(constraints);
+
+      // rileva (una volta per camera) le risoluzioni realmente supportate e riempie il menu
+      const track = stream.getVideoTracks()[0];
+      const devId = track.getSettings().deviceId || 'default';
+      if (!resCache.has(devId)) {
+        setStatus('Rilevo le risoluzioni disponibili della camera…');
+        resCache.set(devId, await probeResolutions(track));
+      }
+      const found = resCache.get(devId);
+      if (found.length) fillResolutions(found);
+      await applyResolution(track, ui.res.value, fps);   // torna alla risoluzione scelta
+
+      video.srcObject = stream;
+      await video.play();
+
+      const currentId = stream.getVideoTracks()[0].getSettings().deviceId;
+      await listCameras(currentId);      // dopo il permesso le etichette sono disponibili
+
+      len = readLen();
+      ui.len.value = len;
+      updateFasciaMax();
+      allocate();
+
+      running = true;
+      lastShift = -1e9;
+      lastMediaTime = -1;
+      frames = 0; steps = 0; tStat = performance.now();
+      ui.start.textContent = 'Arresta';
+      ui.start.classList.add('on');
+      setStatus('Acquisizione avviata…');
+      schedule(token);
+    } catch (e) {
+      running = false;
+      ui.start.textContent = 'Avvia';
+      ui.start.classList.remove('on');
+      setStatus('Impossibile accedere alla fotocamera: ' + e.message +
+                ' (serve https o localhost e il permesso della camera).', true);
+    }
+  }
+
+  function stop() {
+    running = false;
+    token++;
+    stopStream();                         // spegne la fotocamera, l'immagine resta
+    ui.start.textContent = 'Avvia';
+    ui.start.classList.remove('on');
+    setStatus('Arrestato. L\'immagine è conservata: puoi salvarla, cancellarla o riavviare.');
+  }
+
   function save() {
+    if (!hasAlloc) return;
     const a = document.createElement('a');
     a.href = out.toDataURL('image/png');
     a.download = 'slitcam_' + Date.now() + '.png';
     a.click();
   }
 
-  window.addEventListener('keydown', (e) => {
-    switch (e.key) {
-      case 'e': lungFascia = clamp(lungFascia + 10, 1, maxFascia()); break;
-      case 'r': lungFascia = clamp(lungFascia - 10, 1, maxFascia()); break;
-      case 'd': totalTime = Math.max(1, totalTime + 10); break;
-      case 'f': totalTime = Math.max(1, totalTime - 10); break;
-      case 'y': r = Math.min(255, r + 10); break;
-      case 'u': r = Math.max(0, r - 10); break;
-      case 'h': g = Math.min(255, g + 10); break;
-      case 'j': g = Math.max(0, g - 10); break;
-      case 'n': b = Math.min(255, b + 10); break;
-      case 'm': b = Math.max(0, b - 10); break;
-      case 's': save(); break;
-      case 'c': actx.fillStyle = '#fff'; actx.fillRect(0, 0, acc.width, acc.height); break;
-      default: return;
+  // ---- eventi ------------------------------------------------------------------
+  ui.start.addEventListener('click', () => running ? stop() : start());
+  ui.clear.addEventListener('click', () => { if (hasAlloc) clearBuffer(); });
+  ui.save.addEventListener('click', save);
+
+  [ui.time, ui.fascia].forEach(el => el.addEventListener('input', syncOutputs));
+
+  // fascia da tastiera: vale subito mentre scrivi, si normalizza a fine modifica
+  ui.fasciaNum.addEventListener('input', () => {
+    const v = parseInt(ui.fasciaNum.value, 10);
+    if (Number.isFinite(v) && v >= 1) setFascia(v);
+  });
+  ui.fasciaNum.addEventListener('change', () => {
+    const v = parseInt(ui.fasciaNum.value, 10);
+    setFascia(Number.isFinite(v) ? v : val(ui.fascia));
+    ui.fasciaNum.value = ui.fascia.value;
+  });
+  ui.fasciaNum.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') ui.fasciaNum.blur();
+  });
+  ui.fMinus.addEventListener('click', () => setFascia(val(ui.fascia) - 1));
+  ui.fPlus.addEventListener('click', () => setFascia(val(ui.fascia) + 1));
+
+  // cambio camera, risoluzione o fps: riavvia il flusso se è attivo
+  [ui.cam, ui.res, ui.fps].forEach(el => el.addEventListener('change', () => { if (running) start(); }));
+
+  ui.len.addEventListener('change', () => {
+    len = readLen();
+    ui.len.value = len;
+    updateFasciaMax();
+    if (running) {
+      allocate();                         // nuova lunghezza: l'immagine riparte da zero
+      setStatus('Lunghezza impostata a ' + len + ' px (immagine azzerata).');
+    } else {
+      hasAlloc = false;                   // verrà riallocato al prossimo avvio
+      setStatus('Lunghezza impostata a ' + len + ' px: si applica al prossimo avvio.');
     }
-    updateHud();
   });
 
-  document.getElementById('start').addEventListener('click', start);
-  updateHud();
+  ui.mode.addEventListener('change', () => {
+    updateFasciaMax();
+    if (running) {
+      allocate();                         // nuove dimensioni: l'immagine riparte da zero
+      setStatus('Modalità cambiata: ' + (isCol() ? 'colonna' : 'riga') + '.');
+    } else {
+      hasAlloc = false;
+    }
+  });
+
+  window.addEventListener('keydown', (e) => {
+    const t = e.target.tagName;
+    if (t === 'SELECT' || t === 'INPUT' && e.target.type === 'number') return;
+    const bump = (el, d) => { el.value = clamp(val(el) + d, +el.min, +el.max); syncOutputs(); };
+    switch (e.key) {
+      case ' ': if (t !== 'BUTTON') { e.preventDefault(); running ? stop() : start(); } return;
+      case 'e': bump(ui.fascia, 10); break;
+      case 'r': bump(ui.fascia, -10); break;
+      case 'd': bump(ui.time, 10); break;
+      case 'f': bump(ui.time, -10); break;
+      case 's': save(); break;
+      case 'c': if (hasAlloc) clearBuffer(); break;
+    }
+  });
+
+  // se le camere cambiano durante la sessione (collegamento/scollegamento)
+  if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
+    navigator.mediaDevices.addEventListener('devicechange', () => listCameras(ui.cam.value));
+  }
+
+  syncOutputs();
+  listCameras();
 })();
 </script>
 </body>
