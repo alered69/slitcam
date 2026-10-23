@@ -16,7 +16,7 @@
   .group { display: flex; align-items: center; gap: 8px; }
   .group label { white-space: nowrap; }
   .group output { min-width: 5.5em; text-align: right; font-variant-numeric: tabular-nums; }
-  input[type=range] { width: 130px; }
+  input[type=range] { width: 130px; accent-color: #c9c9d1; }
   button.step { padding: 3px 9px; font-weight: bold; }
   input#numFascia { width: 5em; }
   input[type=number] { width: 6.5em; font-size: 14px; padding: 4px 6px; }
@@ -26,13 +26,12 @@
   button:hover, select:hover { border-color: #66676f; }
   input[type=color] { width: 44px; height: 28px; padding: 2px; cursor: pointer;
                       background: var(--field); border: 1px solid var(--line); border-radius: 4px; }
-  input[type=range] { accent-color: #c9c9d1; }
   button { cursor: pointer; }
   button.primary { background: var(--accent); color: #111; border: 1px solid var(--accent); border-radius: 4px; }
   button.primary.on { background: #c0392b; border-color: #c0392b; color: #fff; }
   #stage { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center;
            background: var(--stage); overflow: hidden; }
-  canvas { max-width: 100%; max-height: 100%; background: #000; }
+  canvas { display: block; max-width: 100%; max-height: 100%; background: #000; }
   video { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
   #status { padding: 4px 12px; font-size: 12px; color: var(--muted); border-top: 1px solid var(--line); background: var(--panel); }
   #status.err { color: #ff7b72; }
@@ -112,24 +111,31 @@
 
   const $ = (id) => document.getElementById(id);
   const video = $('cam');
-  const out = $('out');
+  const out = $('out');             // solo anteprima: piccola, adattata alla finestra
   const ctx = out.getContext('2d');
+  const ring = document.createElement('canvas');   // immagine a risoluzione piena (buffer circolare)
+  const rctx = ring.getContext('2d');
 
   const ui = {
     start: $('btnStart'), clear: $('btnClear'), save: $('btnSave'),
     cam: $('selCam'), mode: $('selMode'), res: $('selRes'), fps: $('selFps'),
     len: $('numLen'), time: $('rngTime'), fascia: $('numFascia'), status: $('status'),
-    fMinus: $('btnFMinus'), fPlus: $('btnFPlus'), bg: $('colBg')
+    fMinus: $('btnFMinus'), fPlus: $('btnFPlus'), bg: $('colBg'), stage: $('stage')
   };
+
+  const hasMSTP = typeof MediaStreamTrackProcessor === 'function';   // Chrome/Edge: legge ogni frame
 
   let running = false;
   let stream = null;
-  let lastShift = -1e9;
+  let lastShift = -Infinity;
   let hasAlloc = false;
   let hasContent = false;           // true dopo la prima acquisizione dall'ultima pulizia
   let token = 0;                    // invalida i cicli di acquisizione precedenti
   let lastMediaTime = -1;
-  let frames = 0, steps = 0, tStat = 0;
+  let frames = 0, steps = 0, statT = 0;
+  let camW = 0, camH = 0, camFps = 0;
+  let head = 0;                     // posizione di scrittura nel buffer circolare
+  let dirty = false;                // l'anteprima va ridisegnata
 
   const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
   const val = (el) => parseInt(el.value, 10);
@@ -160,7 +166,7 @@
 
   // la fascia non può superare la dimensione della camera lungo la fessura
   function updateFasciaMax() {
-    const span = isCol() ? (video.videoWidth || 200) : (video.videoHeight || 200);
+    const span = isCol() ? (camW || 200) : (camH || 200);
     const max = Math.max(1, Math.min(span, len - 1));
     ui.fascia.max = max;
     if (val(ui.fascia) > max) ui.fascia.value = max;
@@ -173,17 +179,37 @@
     return clamp(v, 200, MAX_LEN);
   }
 
-  // ---- buffer (un solo canvas: ciò che vedi è ciò che salvi) --------------------
+  // ---- buffer circolare ----------------------------------------------------------
+  // Invece di spostare tutta l'immagine a ogni passo (costo proporzionale alla lunghezza),
+  // si scrive la nuova fessura nella posizione "head", che arretra a ogni passo.
+  // Il costo per passo dipende solo dalla fascia, non dalla lunghezza dell'immagine.
   function neededSize() {
-    const vw = video.videoWidth, vh = video.videoHeight;
-    return isCol() ? { w: len, h: vh } : { w: vw, h: len };
+    return isCol() ? { w: len, h: camH } : { w: camW, h: len };
   }
 
   function clearBuffer() {
-    ctx.fillStyle = ui.bg.value;
-    ctx.fillRect(0, 0, out.width, out.height);
+    rctx.fillStyle = ui.bg.value;
+    rctx.fillRect(0, 0, ring.width, ring.height);
     out.style.background = ui.bg.value;
+    head = 0;
     hasContent = false;
+    dirty = true;
+  }
+
+  // adatta la dimensione dell'anteprima alla finestra (mai oltre la risoluzione dell'immagine)
+  function fitView() {
+    if (!ring.width || !ring.height) return;
+    const sw = ui.stage.clientWidth, sh = ui.stage.clientHeight;
+    if (!sw || !sh) return;
+    const s = Math.min(sw / ring.width, sh / ring.height);
+    const cssW = Math.max(1, Math.floor(ring.width * s));
+    const cssH = Math.max(1, Math.floor(ring.height * s));
+    const dpr = window.devicePixelRatio || 1;
+    out.style.width = cssW + 'px';
+    out.style.height = cssH + 'px';
+    out.width = Math.max(1, Math.min(ring.width, Math.round(cssW * dpr)));
+    out.height = Math.max(1, Math.min(ring.height, Math.round(cssH * dpr)));
+    dirty = true;
   }
 
   // riallocca solo se le dimensioni cambiano (altrimenti l'immagine continua)
@@ -197,65 +223,120 @@
       ({ w, h } = neededSize());
       setStatus('Lunghezza ridotta a ' + len + ' px per limiti di memoria.', true);
     }
-    if (!hasAlloc || out.width !== w || out.height !== h) {
-      out.width = w;
-      out.height = h;
+    if (!hasAlloc || ring.width !== w || ring.height !== h) {
+      ring.width = w;
+      ring.height = h;
       hasAlloc = true;
       clearBuffer();
+      fitView();
     }
+  }
+
+  // disegna il buffer "srotolato" (fessura più recente all'inizio) su un contesto di dimensione dw×dh
+  function unrollTo(c, dw, dh) {
+    const W = ring.width, H = ring.height;
+    c.fillStyle = ui.bg.value;
+    c.fillRect(0, 0, dw, dh);
+    if (isCol()) {
+      const a = W - head, da = a / W * dw;
+      c.drawImage(ring, head, 0, a, H, 0, 0, da, dh);
+      if (head > 0) c.drawImage(ring, 0, 0, head, H, da, 0, dw - da, dh);
+    } else {
+      const a = H - head, da = a / H * dh;
+      c.drawImage(ring, 0, head, W, a, 0, 0, dw, da);
+      if (head > 0) c.drawImage(ring, 0, 0, W, head, 0, da, dw, dh - da);
+    }
+  }
+
+  function renderView() {
+    if (!dirty || !hasAlloc) return;
+    dirty = false;
+    unrollTo(ctx, out.width, out.height);
   }
 
   // ---- acquisizione ------------------------------------------------------------
-  function step() {
-    const vw = video.videoWidth, vh = video.videoHeight;
+  // src: <video> o VideoFrame; sw, sh: dimensioni reali del fotogramma
+  function step(src, sw, sh) {
     const f = getFascia();
+    const W = ring.width, H = ring.height;
     if (isCol()) {
-      // sposta a destra e copia la nuova colonna centrale a sinistra
-      ctx.drawImage(out, 0, 0, len - f, vh, f, 0, len - f, vh);
-      const sx = Math.floor(vw / 2 - f / 2);
-      ctx.drawImage(video, sx, 0, f, vh, 0, 0, f, vh);
+      head = (head - f + W) % W;
+      const sx = Math.floor(sw / 2 - f / 2);
+      const first = Math.min(f, W - head);
+      rctx.drawImage(src, sx, 0, first, sh, head, 0, first, H);
+      if (first < f) rctx.drawImage(src, sx + first, 0, f - first, sh, 0, 0, f - first, H);
     } else {
-      // sposta in basso e copia la nuova riga centrale in alto
-      ctx.drawImage(out, 0, 0, vw, len - f, 0, f, vw, len - f);
-      const sy = Math.floor(vh / 2 - f / 2);
-      ctx.drawImage(video, 0, sy, vw, f, 0, 0, vw, f);
+      head = (head - f + H) % H;
+      const sy = Math.floor(sh / 2 - f / 2);
+      const first = Math.min(f, H - head);
+      rctx.drawImage(src, 0, sy, sw, first, 0, head, W, first);
+      if (first < f) rctx.drawImage(src, 0, sy + first, sw, f - first, 0, 0, W, f - first);
     }
     steps++;
     hasContent = true;
+    dirty = true;
   }
 
-  function onFrame(now, meta, myToken) {
-    if (!running || myToken !== token) return;
+  // now: tempo del fotogramma in ms
+  function onFrame(now, src, sw, sh) {
     frames++;
-    if (now - lastShift >= val(ui.time)) {
-      lastShift = now;
-      step();
+    const T = val(ui.time);
+    if (now - lastShift >= T) {
+      // mantiene il ritmo medio di 1000/T passi al secondo senza arrotondare al periodo del frame
+      lastShift = (T > 0 && now - lastShift < 2 * T) ? lastShift + T : now;
+      step(src, sw, sh);
     }
-    if (now - tStat >= 1000) {
-      const secs = (now - tStat) / 1000;
-      setStatus(`Acquisizione: ${video.videoWidth}×${video.videoHeight}, ` +
-                (isCol() ? 'colonna' : 'riga') +
-                ` — camera ${(frames / secs).toFixed(0)} fps, passi ${(steps / secs).toFixed(0)}/s.`);
-      frames = 0; steps = 0; tStat = now;
-    }
-    schedule(myToken);
   }
 
-  // una acquisizione per ogni fotogramma reale della camera (niente righe duplicate)
+  // Chrome/Edge: ogni fotogramma della camera, indipendentemente dalla frequenza dello schermo
+  async function pumpFrames(track, myToken) {
+    const reader = new MediaStreamTrackProcessor({ track }).readable.getReader();
+    try {
+      while (running && myToken === token) {
+        const { value: frame, done } = await reader.read();
+        if (done) break;
+        try {
+          if (running && myToken === token) onFrame(frame.timestamp / 1000, frame, frame.displayWidth, frame.displayHeight);
+        } finally { frame.close(); }
+      }
+    } catch (e) { /* flusso chiuso */ }
+    try { reader.cancel(); } catch (e) { /* già chiuso */ }
+  }
+
+  // altri browser: un'acquisizione per fotogramma presentato (al massimo la frequenza dello schermo)
   function schedule(myToken) {
     if (video.requestVideoFrameCallback) {
-      video.requestVideoFrameCallback((now, meta) => onFrame(now, meta, myToken));
+      video.requestVideoFrameCallback((now) => {
+        if (!running || myToken !== token) return;
+        onFrame(now, video, video.videoWidth, video.videoHeight);
+        schedule(myToken);
+      });
     } else {
       requestAnimationFrame((now) => {
         if (!running || myToken !== token) return;
         if (video.readyState >= 2 && video.currentTime !== lastMediaTime) {
           lastMediaTime = video.currentTime;
-          onFrame(now, null, myToken);
-        } else {
-          schedule(myToken);
+          onFrame(now, video, video.videoWidth, video.videoHeight);
         }
+        schedule(myToken);
       });
     }
+  }
+
+  // ciclo di interfaccia: ridisegna l'anteprima e aggiorna le statistiche
+  function uiLoop(t) {
+    renderView();
+    if (running && t - statT >= 1000) {
+      if (statT) {
+        const secs = (t - statT) / 1000;
+        setStatus(`Acquisizione: ${camW}×${camH}, ${isCol() ? 'colonna' : 'riga'} — ` +
+                  `camera dichiara ${camFps ? Math.round(camFps) : '?'} fps, ricevuti ${(frames / secs).toFixed(0)} fps, ` +
+                  `passi ${(steps / secs).toFixed(0)}/s` +
+                  (hasMSTP ? '.' : ' (lettura sincronizzata allo schermo).'));
+      }
+      frames = 0; steps = 0; statT = t;
+    }
+    requestAnimationFrame(uiLoop);
   }
 
   // ---- fotocamera --------------------------------------------------------------
@@ -312,20 +393,25 @@
     ui.res.value = [...ui.res.options].some(o => o.value === keep) ? keep : 'max';
   }
 
+  // Dopo il rilevamento la traccia resta sull'ultima risoluzione provata (la più piccola):
+  // questa funzione la riporta sempre a quella scelta, con un ripiego se la richiesta esatta fallisce.
   async function applyResolution(track, resValue, fps) {
-    try {
-      if (resValue === 'max') {
-        const cap = track.getCapabilities ? track.getCapabilities() : null;
-        if (cap && cap.width && cap.height) {
-          await track.applyConstraints({
-            width: { ideal: cap.width.max }, height: { ideal: cap.height.max }, frameRate: { ideal: fps }
-          });
-        }
-      } else {
-        const [w, h] = resValue.split('x').map(Number);
-        await track.applyConstraints({ width: { exact: w }, height: { exact: h }, frameRate: { ideal: fps } });
-      }
-    } catch (e) { /* si resta con la risoluzione già ottenuta */ }
+    let w, h, exact = false;
+    if (resValue === 'max') {
+      const cap = track.getCapabilities ? track.getCapabilities() : null;
+      w = cap && cap.width ? cap.width.max : 7680;
+      h = cap && cap.height ? cap.height.max : 4320;
+    } else {
+      [w, h] = resValue.split('x').map(Number);
+      exact = true;
+    }
+    const attempts = [];
+    if (exact) attempts.push({ width: { exact: w }, height: { exact: h }, frameRate: { ideal: fps } });
+    attempts.push({ width: { ideal: w }, height: { ideal: h }, frameRate: { ideal: fps } });
+    attempts.push({ width: { ideal: w }, height: { ideal: h } });
+    for (const c of attempts) {
+      try { await track.applyConstraints(c); return; } catch (e) { /* prova il successivo */ }
+    }
   }
 
   function stopStream() {
@@ -334,7 +420,8 @@
   }
 
   async function start() {
-    token++;
+    const myToken = ++token;
+    running = false;
     stopStream();
     try {
       const isMax = ui.res.value === 'max';
@@ -346,7 +433,9 @@
         video: { width: { ideal: rw }, height: { ideal: rh }, frameRate: { ideal: fps, min: 1 } }
       };
       if (ui.cam.value) constraints.video.deviceId = { exact: ui.cam.value };
-      stream = await navigator.mediaDevices.getUserMedia(constraints);
+      const s = await navigator.mediaDevices.getUserMedia(constraints);
+      if (myToken !== token) { s.getTracks().forEach(t => t.stop()); return; }   // superata da un nuovo avvio/arresto
+      stream = s;
 
       // rileva (una volta per camera) le risoluzioni realmente supportate e riempie il menu
       const track = stream.getVideoTracks()[0];
@@ -358,11 +447,16 @@
       const found = resCache.get(devId);
       if (found.length) fillResolutions(found);
       await applyResolution(track, ui.res.value, fps);   // torna alla risoluzione scelta
+      if (myToken !== token) return;
 
       video.srcObject = stream;
       await video.play();
+      if (myToken !== token) return;
+      camW = video.videoWidth;
+      camH = video.videoHeight;
+      camFps = track.getSettings().frameRate || 0;
 
-      const currentId = stream.getVideoTracks()[0].getSettings().deviceId;
+      const currentId = track.getSettings().deviceId;
       await listCameras(currentId);      // dopo il permesso le etichette sono disponibili
 
       len = readLen();
@@ -371,14 +465,23 @@
       allocate();
 
       running = true;
-      lastShift = -1e9;
+      lastShift = -Infinity;
       lastMediaTime = -1;
-      frames = 0; steps = 0; tStat = performance.now();
+      frames = 0; steps = 0; statT = 0;
       ui.start.textContent = 'Arresta';
       ui.start.classList.add('on');
       setStatus('Acquisizione avviata…');
-      schedule(token);
+
+      if (hasMSTP) {
+        // le dimensioni sono note: il video nascosto non serve più e si evita di decodificarlo due volte
+        video.pause();
+        video.srcObject = null;
+        pumpFrames(track, myToken);
+      } else {
+        schedule(myToken);
+      }
     } catch (e) {
+      if (myToken !== token) return;
       running = false;
       ui.start.textContent = 'Avvia';
       ui.start.classList.remove('on');
@@ -398,10 +501,19 @@
 
   function save() {
     if (!hasAlloc) return;
-    const a = document.createElement('a');
-    a.href = out.toDataURL('image/png');
-    a.download = 'slitcam_' + Date.now() + '.png';
-    a.click();
+    const t = document.createElement('canvas');
+    t.width = ring.width;
+    t.height = ring.height;
+    unrollTo(t.getContext('2d'), t.width, t.height);
+    t.toBlob((blob) => {
+      if (!blob) { setStatus('Salvataggio non riuscito: immagine troppo grande per il browser.', true); return; }
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'slitcam_' + Date.now() + '.png';
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
+    }, 'image/png');
   }
 
   // ---- eventi ------------------------------------------------------------------
@@ -465,6 +577,10 @@
     }
   });
 
+  // anteprima adattata alla finestra
+  if (window.ResizeObserver) new ResizeObserver(fitView).observe(ui.stage);
+  window.addEventListener('resize', fitView);
+
   // se le camere cambiano durante la sessione (collegamento/scollegamento)
   if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
     navigator.mediaDevices.addEventListener('devicechange', () => listCameras(ui.cam.value));
@@ -472,6 +588,7 @@
 
   syncOutputs();
   listCameras();
+  requestAnimationFrame(uiLoop);
 })();
 </script>
 </body>
