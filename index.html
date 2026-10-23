@@ -57,7 +57,8 @@
   <div class="group">
     <label for="selRes">Risoluzione</label>
     <select id="selRes">
-      <option value="1920x1080">1920×1080</option>
+      <option value="max">Massima disponibile</option>
+      <option value="1920x1080" selected>1920×1080</option>
       <option value="1280x720">1280×720</option>
       <option value="640x480">640×480</option>
     </select>
@@ -259,6 +260,58 @@
     } catch (e) { /* elenco non disponibile: resta "Predefinita" */ }
   }
 
+  // ---- risoluzioni supportate ----------------------------------------------------
+  // I browser non elencano le risoluzioni: si provano quelle standard e si tengono quelle accettate.
+  const resCache = new Map();           // deviceId -> [[w, h], ...]
+  const LADDER = [[7680,4320],[5120,2880],[4096,3072],[4096,2160],[3840,2160],[4032,3024],[3264,2448],
+                  [2592,1944],[2560,1440],[2048,1536],[1920,1080],[1600,1200],[1280,960],[1280,720],
+                  [1024,768],[800,600],[640,480],[320,240]];
+
+  async function probeResolutions(track) {
+    const cap = track.getCapabilities ? track.getCapabilities() : null;
+    const found = [];
+    for (const [w, h] of LADDER) {
+      if (cap && cap.width && cap.height &&
+          (w > cap.width.max || w < cap.width.min || h > cap.height.max || h < cap.height.min)) continue;
+      try {
+        await track.applyConstraints({ width: { exact: w }, height: { exact: h } });
+        const s = track.getSettings();
+        if (s.width && s.height && !found.some(([fw, fh]) => fw === s.width && fh === s.height)) {
+          found.push([s.width, s.height]);
+        }
+      } catch (e) { /* risoluzione non supportata */ }
+    }
+    return found.sort((a, b) => b[0] * b[1] - a[0] * a[1]);
+  }
+
+  function fillResolutions(list) {
+    const keep = ui.res.value;
+    ui.res.innerHTML = '<option value="max">Massima disponibile</option>';
+    list.forEach(([w, h]) => {
+      const o = document.createElement('option');
+      o.value = w + 'x' + h;
+      o.textContent = `${w}×${h} (${(w * h / 1e6).toFixed(1)} MP)`;
+      ui.res.appendChild(o);
+    });
+    ui.res.value = [...ui.res.options].some(o => o.value === keep) ? keep : 'max';
+  }
+
+  async function applyResolution(track, resValue, fps) {
+    try {
+      if (resValue === 'max') {
+        const cap = track.getCapabilities ? track.getCapabilities() : null;
+        if (cap && cap.width && cap.height) {
+          await track.applyConstraints({
+            width: { ideal: cap.width.max }, height: { ideal: cap.height.max }, frameRate: { ideal: fps }
+          });
+        }
+      } else {
+        const [w, h] = resValue.split('x').map(Number);
+        await track.applyConstraints({ width: { exact: w }, height: { exact: h }, frameRate: { ideal: fps } });
+      }
+    } catch (e) { /* si resta con la risoluzione già ottenuta */ }
+  }
+
   function stopStream() {
     if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
     video.srcObject = null;
@@ -268,7 +321,9 @@
     token++;
     stopStream();
     try {
-      const [rw, rh] = ui.res.value.split('x').map(Number);
+      const isMax = ui.res.value === 'max';
+      // "massima": si chiede un valore enorme, il browser sceglie la modalità più alta che la camera offre
+      const [rw, rh] = isMax ? [7680, 4320] : ui.res.value.split('x').map(Number);
       const fps = parseInt(ui.fps.value, 10);
       const constraints = {
         audio: false,
@@ -276,6 +331,18 @@
       };
       if (ui.cam.value) constraints.video.deviceId = { exact: ui.cam.value };
       stream = await navigator.mediaDevices.getUserMedia(constraints);
+
+      // rileva (una volta per camera) le risoluzioni realmente supportate e riempie il menu
+      const track = stream.getVideoTracks()[0];
+      const devId = track.getSettings().deviceId || 'default';
+      if (!resCache.has(devId)) {
+        setStatus('Rilevo le risoluzioni disponibili della camera…');
+        resCache.set(devId, await probeResolutions(track));
+      }
+      const found = resCache.get(devId);
+      if (found.length) fillResolutions(found);
+      await applyResolution(track, ui.res.value, fps);   // torna alla risoluzione scelta
+
       video.srcObject = stream;
       await video.play();
 
