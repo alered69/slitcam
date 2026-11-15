@@ -29,10 +29,12 @@
   button.primary.on { background: #c0392b; border-color: #c0392b; color: #fff; }
   button[aria-pressed=true] { background: #e0c14a; color: #111; border-color: #e0c14a; }
   input[type=range] { accent-color: #c9c9d1; }
+  input[type=checkbox] { accent-color: #c9c9d1; width: 18px; height: 18px; vertical-align: middle; margin: 0 6px 0 0; }
   @media (pointer: coarse) {
     select, button, input[type=number] { min-height: 40px; }
     button.step { min-width: 42px; }
     input[type=color] { height: 40px; }
+    #vbar button { min-height: 36px; }
   }
 
   /* barra principale: sempre visibile */
@@ -55,6 +57,10 @@
   .ctl select { flex: 1; min-width: 0; }
   .ctl input[type=range] { flex: 1; min-width: 0; width: auto; }
   .ctl output { min-width: 4.6em; text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .ctl label { line-height: 1.25; }
+  .hint { font-size: 12px; color: var(--muted); margin: 2px 0 6px; line-height: 1.35; }
+  .btns { display: flex; gap: 8px; flex-wrap: wrap; }
+  #vbar button.rec { background: #c0392b; color: #fff; border-color: #c0392b; }
   .msg { font-size: 12px; color: #ff9f8f; min-height: 1em; margin-top: 4px; }
   @media (max-width: 560px) {
     .row { grid-template-columns: 7.6em 1fr; }
@@ -62,9 +68,26 @@
     #bar { padding: 6px 8px; }
   }
 
-  #stage { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center;
-           background: var(--stage); overflow: hidden; }
-  canvas { display: block; max-width: 100%; max-height: 100%; background: #000; }
+  /* area immagine */
+  #stage { flex: 1; min-height: 0; position: relative; background: var(--stage); overflow: hidden;
+           touch-action: none; user-select: none; -webkit-user-select: none; }
+  #stage.free { cursor: grab; }
+  #stage.free.drag { cursor: grabbing; }
+  canvas#out { position: absolute; left: 0; top: 0; width: 100%; height: 100%; display: block; }
+  #vbar { position: absolute; top: 8px; left: 8px; display: flex; gap: 4px; z-index: 2; }
+  #vbar button { padding: 4px 10px; font-size: 12px; background: rgba(27,27,30,.85); }
+  #vbar button[aria-pressed=true] { background: #e0c14a; }
+  #toneOv { position: absolute; top: 46px; left: 8px; z-index: 2; display: flex; align-items: center; gap: 8px;
+            padding: 4px 10px; border-radius: 4px; background: rgba(27,27,30,.85); font-size: 12px; }
+  #toneOv input[type=range] { width: 150px; }
+  #toneOv output { min-width: 3em; text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); }
+  @media (pointer: coarse) { #toneOv { top: 52px; padding: 6px 12px; } #toneOv input[type=range] { width: 170px; } }
+  #pip { position: absolute; right: 8px; bottom: 14px; z-index: 2; background: #000;
+         border: 1px solid rgba(255,255,255,.4); border-radius: 4px; pointer-events: none; }
+  #fillbar { position: absolute; left: 0; right: 0; bottom: 0; height: 4px; z-index: 2; pointer-events: none;
+             background: rgba(255,255,255,.08); }
+  #fillbar i { display: block; height: 100%; width: 0; background: #5ec8a8; }
+  #fillbar.full i { background: #e0a030; }
   video { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
   #status { padding: 4px 12px calc(4px + env(safe-area-inset-bottom)); font-size: 12px; color: var(--muted);
             border-top: 1px solid var(--line); background: var(--panel); min-height: 2.6em; }
@@ -92,7 +115,7 @@
     <h3>Camera</h3>
     <div class="row"><label for="selCam">Fotocamera</label>
       <div class="ctl"><select id="selCam"><option value="">Predefinita</option></select>
-        <button id="btnFlip" title="Passa all'altra fotocamera" hidden>⇄</button></div></div>
+        <button id="btnCamFlip" title="Passa all'altra fotocamera" hidden>⇄</button></div></div>
     <div class="row"><label for="selRes">Risoluzione</label>
       <div class="ctl"><select id="selRes">
         <option value="max">Massima disponibile</option>
@@ -104,19 +127,32 @@
       <div class="ctl"><select id="selFps">
         <option value="30">30</option><option value="60" selected>60</option><option value="120">120</option>
       </select></div></div>
+    <div class="row"><label for="chkPip">Anteprima</label>
+      <div class="ctl"><label><input id="chkPip" type="checkbox" checked>camera con la fessura</label></div></div>
     <div class="row" id="rowTorch" hidden><label>Torcia</label>
       <div class="ctl"><button id="btnTorch" aria-pressed="false">Spenta</button></div></div>
   </div>
 
   <div class="sec">
     <h3>Acquisizione</h3>
-    <div class="row"><label for="selMode">Modo</label>
+    <div class="row"><label for="selMode">Scorrimento</label>
       <div class="ctl"><select id="selMode">
-        <option value="col">Colonna – scorre ↔</option>
-        <option value="row">Riga – scorre ↕</option>
+        <option value="col">Colonna → (a destra)</option>
+        <option value="col-rev">Colonna ← (a sinistra)</option>
+        <option value="row">Riga ↓ (in basso)</option>
+        <option value="row-rev">Riga ↑ (in alto)</option>
       </select></div></div>
+    <div class="row"><label for="chkMirror">Specchio</label>
+      <div class="ctl"><label><input id="chkMirror" type="checkbox">capovolgi lungo la fessura</label></div></div>
+    <div class="row"><label for="chkOnce">Una passata</label>
+      <div class="ctl"><label><input id="chkOnce" type="checkbox">ferma quando è piena</label></div></div>
     <div class="row"><label for="numLen">Lunghezza (px)</label>
       <div class="ctl"><input id="numLen" type="number" inputmode="numeric" min="200" max="16000" step="100" value="3000"></div></div>
+    <div class="row"><label for="numCm">Lunghezza (cm)</label>
+      <div class="ctl"><input id="numCm" type="number" inputmode="decimal" min="1" step="0.5" title="Lunghezza di stampa: calcola i pixel in base ai dpi"></div></div>
+    <div class="row"><label for="numDpi">Stampa (dpi)</label>
+      <div class="ctl"><input id="numDpi" type="number" inputmode="numeric" min="50" max="1200" step="10" value="300"></div></div>
+    <div class="hint" id="printInfo"></div>
     <div class="row"><label for="rngTime">Tempo (ms)</label>
       <div class="ctl"><input id="rngTime" type="range" min="0" max="500" step="1" value="0">
         <output id="outTime">ogni frame</output></div></div>
@@ -125,7 +161,26 @@
   </div>
 
   <div class="sec">
-    <h3>Salvataggio</h3>
+    <h3>Tono</h3>
+    <div class="row"><label for="selTone">Colori</label>
+      <div class="ctl"><select id="selTone">
+        <option value="color">Colore</option>
+        <option value="gray">Scala di grigi</option>
+        <option value="bw">Bianco e nero (soglia)</option>
+      </select></div></div>
+    <div class="row" id="rowThr" hidden><label for="rngThr">Soglia</label>
+      <div class="ctl"><input id="rngThr" type="range" min="5" max="95" step="1" value="50"><output id="outThr">50%</output></div></div>
+    <div class="row" id="rowBright"><label for="rngBright">Luminosità</label>
+      <div class="ctl"><input id="rngBright" type="range" min="25" max="200" step="1" value="100"><output id="outBright">100%</output></div></div>
+    <div class="row" id="rowContrast"><label for="rngContrast">Contrasto</label>
+      <div class="ctl"><input id="rngContrast" type="range" min="25" max="300" step="1" value="100"><output id="outContrast">100%</output></div></div>
+    <div class="row"><label for="chkInvert">Negativo</label>
+      <div class="ctl"><label><input id="chkInvert" type="checkbox">inverti chiari e scuri</label></div></div>
+    <div class="row"><label></label><div class="ctl"><button id="btnToneReset">Azzera tono</button></div></div>
+  </div>
+
+  <div class="sec">
+    <h3>Uscita</h3>
     <div class="row"><label for="selFmt">Formato</label>
       <div class="ctl"><select id="selFmt">
         <option value="png">PNG (senza perdita)</option>
@@ -135,12 +190,25 @@
     <div class="row" id="rowQuality" hidden><label for="rngQuality">Qualità</label>
       <div class="ctl"><input id="rngQuality" type="range" min="50" max="100" step="1" value="92">
         <output id="outQuality">92</output></div></div>
+    <div class="row"><label for="chkAuto">Installazione</label>
+      <div class="ctl"><label><input id="chkAuto" type="checkbox">salva e riparti quando è piena</label></div></div>
+    <div class="row" id="rowVid"><label for="selVq">Video</label>
+      <div class="ctl"><select id="selVq">
+        <option value="1280">Standard (1280)</option>
+        <option value="1920">Alta (1920)</option>
+      </select></div></div>
+    <div class="row" id="rowAutoVid"><label for="chkAutoVid">Video automatico</label>
+      <div class="ctl"><label><input id="chkAutoVid" type="checkbox">registra con l'acquisizione</label></div></div>
+    <div class="row"><label>Parametri</label>
+      <div class="ctl btns"><button id="btnExport">Esporta</button><button id="btnImport">Importa</button></div></div>
+    <div class="hint">Il PNG/JPEG salvato contiene i dpi e i parametri usati: importandolo si ripete l'acquisizione.</div>
+    <input id="fileParams" type="file" accept=".json,.png,.jpg,.jpeg,image/png,image/jpeg,application/json" hidden>
   </div>
 
   <div class="sec" id="secCam" hidden>
     <h3>Controlli camera</h3>
     <div class="row" id="rowExpManual" hidden><label for="chkExp">Esposizione</label>
-      <div class="ctl"><label><input id="chkExp" type="checkbox"> manuale</label></div></div>
+      <div class="ctl"><label><input id="chkExp" type="checkbox">manuale</label></div></div>
     <div class="row" id="rowExpTime" hidden><label for="rngExpTime">Tempo di posa</label>
       <div class="ctl"><input id="rngExpTime" type="range" min="0" max="1000" step="1"><output id="outExpTime"></output></div></div>
     <div class="row" id="rowIso" hidden><label for="rngIso">ISO</label>
@@ -148,11 +216,11 @@
     <div class="row" id="rowEv" hidden><label for="rngEv">Compensazione</label>
       <div class="ctl"><input id="rngEv" type="range" min="0" max="1000" step="1"><output id="outEv"></output></div></div>
     <div class="row" id="rowWbManual" hidden><label for="chkWb">Bianco</label>
-      <div class="ctl"><label><input id="chkWb" type="checkbox"> manuale</label></div></div>
+      <div class="ctl"><label><input id="chkWb" type="checkbox">manuale</label></div></div>
     <div class="row" id="rowTemp" hidden><label for="rngTemp">Temperatura</label>
       <div class="ctl"><input id="rngTemp" type="range" min="0" max="1000" step="1"><output id="outTemp"></output></div></div>
     <div class="row" id="rowFocusManual" hidden><label for="chkFocus">Fuoco</label>
-      <div class="ctl"><label><input id="chkFocus" type="checkbox"> manuale</label></div></div>
+      <div class="ctl"><label><input id="chkFocus" type="checkbox">manuale</label></div></div>
     <div class="row" id="rowFocus" hidden><label for="rngFocus">Distanza</label>
       <div class="ctl"><input id="rngFocus" type="range" min="0" max="1000" step="1"><output id="outFocus"></output></div></div>
     <div class="row" id="rowZoom" hidden><label for="rngZoom">Zoom</label>
@@ -162,8 +230,24 @@
   </div>
 </section>
 
-<main id="stage"><canvas id="out" width="1200" height="400"></canvas></main>
-<footer id="status">Pronto. Premi Avvia per attivare la fotocamera. Scorciatoie: spazio = avvia/arresta, s = salva, c = cancella, e/r = fascia, d/f = tempo.</footer>
+<main id="stage">
+  <canvas id="out"></canvas>
+  <div id="vbar" hidden>
+    <button id="vFit" aria-pressed="true" title="Mostra tutta l'immagine (doppio tocco: alterna con Coda)">Intera</button>
+    <button id="vTail" aria-pressed="false" title="Segue il punto in cui l'immagine si forma">Coda</button>
+    <button id="v11" aria-pressed="false" title="Un pixel dell'immagine per pixel dello schermo">1:1</button>
+    <button id="vTone" aria-pressed="false" title="Cambia tra colore, grigi e bianco e nero (tasto b)">Colore</button>
+    <button id="vRec" title="Registra un video della formazione dell'immagine">⏺ Video</button>
+  </div>
+  <div id="toneOv" hidden>
+    <label id="ovLabel" for="ovRange">Soglia</label>
+    <input id="ovRange" type="range" min="5" max="95" step="1" value="50">
+    <output id="ovOut">50%</output>
+  </div>
+  <canvas id="pip" hidden></canvas>
+  <div id="fillbar"><i></i></div>
+</main>
+<footer id="status">Pronto. Premi Avvia per attivare la fotocamera. Scorciatoie: spazio = avvia/arresta, s = salva, c = cancella, e/r = fascia, d/f = tempo, v = vista.</footer>
 <video id="cam" playsinline muted></video>
 
 <script>
@@ -171,23 +255,31 @@
   const MAX_LEN = 16000;            // limite pratico per la dimensione di un canvas
   const MAX_AREA = 150e6;           // pixel totali massimi (prudenza per la memoria)
   const SINGLE_MAX = 100e6;         // oltre questa area il salvataggio si divide in più file
+  const STAGE_COLOR = '#0b0b0c';
   let len = 3000;                   // lunghezza dell'immagine nella direzione di scorrimento
 
   const $ = (id) => document.getElementById(id);
   const sleep = (ms) => new Promise(r => setTimeout(r, ms));
   const video = $('cam');
-  const out = $('out');             // solo anteprima: piccola, adattata alla finestra
+  const out = $('out');             // vista: occupa tutta l'area immagine
   const ctx = out.getContext('2d');
+  const pip = $('pip');             // anteprima della camera
+  const pctx = pip.getContext('2d');
   const ring = document.createElement('canvas');   // immagine a risoluzione piena (buffer circolare)
   const rctx = ring.getContext('2d');
 
   const ui = {
     start: $('btnStart'), clear: $('btnClear'), save: $('btnSave'), share: $('btnShare'),
-    cam: $('selCam'), flip: $('btnFlip'), mode: $('selMode'), res: $('selRes'), fps: $('selFps'),
+    cam: $('selCam'), camFlip: $('btnCamFlip'), mode: $('selMode'), res: $('selRes'), fps: $('selFps'),
     len: $('numLen'), time: $('rngTime'), fascia: $('numFascia'), status: $('status'),
     fMinus: $('btnFMinus'), fPlus: $('btnFPlus'), bg: $('colBg'), stage: $('stage'),
     opts: $('opts'), btnOpts: $('btnOpts'), fmt: $('selFmt'), quality: $('rngQuality'),
-    torch: $('btnTorch'), secCam: $('secCam'), camMsg: $('camMsg')
+    torch: $('btnTorch'), secCam: $('secCam'), camMsg: $('camMsg'),
+    mirror: $('chkMirror'), once: $('chkOnce'), pipOn: $('chkPip'),
+    vbar: $('vbar'), vFit: $('vFit'), vTail: $('vTail'), v11: $('v11'), fillbar: $('fillbar'),
+    cm: $('numCm'), dpi: $('numDpi'), printInfo: $('printInfo'), auto: $('chkAuto'), vq: $('selVq'),
+    autoVid: $('chkAutoVid'), vRec: $('vRec'), btnExport: $('btnExport'), btnImport: $('btnImport'), fileParams: $('fileParams'),
+    vTone: $('vTone'), toneOv: $('toneOv'), ovRange: $('ovRange'), ovOut: $('ovOut'), ovLabel: $('ovLabel')
   };
 
   const hasMSTP = typeof MediaStreamTrackProcessor === 'function';   // Chrome/Edge: legge ogni frame
@@ -201,15 +293,21 @@
   let hasContent = false;           // true dopo la prima acquisizione dall'ultima pulizia
   let token = 0;                    // invalida i cicli di acquisizione precedenti
   let lastMediaTime = -1;
-  let frames = 0, steps = 0, statT = 0, statusHold = 0;
+  let frames = 0, steps = 0, statT = 0, statusHold = 0, lastPip = 0;
   let camW = 0, camH = 0, camFps = 0;
   let head = 0;                     // posizione di scrittura nel buffer circolare
-  let dirty = false;                // l'anteprima va ridisegnata
+  let filled = 0;                   // pixel scritti dall'ultima pulizia (al massimo la lunghezza)
+  let wrapNotified = false, passDone = false;
+  let ringCol = true, ringRev = false;   // orientamento dell'immagine contenuta nel buffer
+  let dirty = false;                // la vista va ridisegnata
   let wakeLock = null;
+  let saving = false, autoFull = false, autoCount = 0;   // salvataggio automatico (modo installazione)
+  let rec = null;                   // registrazione video in corso
 
   const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
   const val = (el) => parseInt(el.value, 10);
-  const isCol = () => ui.mode.value === 'col';
+  const isCol = () => ui.mode.value.startsWith('col');      // impostazione attuale
+  const isRev = () => ui.mode.value.endsWith('-rev');
 
   // hold: ms durante i quali il messaggio non viene sostituito dalle statistiche
   function setStatus(msg, isErr, hold) {
@@ -227,13 +325,17 @@
   };
   const prefs = store.get(PREF_KEY) || {};
   let camPref = prefs.cam || '';
+  let viewMode = prefs.view === 'tail' ? 'tail' : 'fit';     // 'fit' | 'tail' | 'free'
+  let view = { vs: 1, offA: 0, offC: 0 };                    // vista libera: scala e spostamento
 
   function savePrefs() {
     if (ui.cam.value) camPref = ui.cam.value;
     store.set(PREF_KEY, {
       mode: ui.mode.value, res: ui.res.value, fps: ui.fps.value, len: ui.len.value, time: ui.time.value,
       fascia: ui.fascia.value, bg: ui.bg.value, fmt: ui.fmt.value, quality: ui.quality.value,
-      cam: camPref, opts: !ui.opts.hidden
+      cam: camPref, opts: !ui.opts.hidden, mirror: ui.mirror.checked, once: ui.once.checked,
+      pip: ui.pipOn.checked, view: viewMode === 'tail' ? 'tail' : 'fit', tone: { ...tone },
+      dpi: ui.dpi.value, vq: ui.vq.value, autoVid: ui.autoVid.checked, auto: ui.auto.checked
     });
   }
   let prefTimer = 0;
@@ -281,9 +383,114 @@
     savePrefs();
   }
 
+  // ---- tono: colore, grigi, bianco e nero ------------------------------------------------
+  // Non distruttivo: il buffer conserva sempre i colori originali. Il tono si applica alla vista, all'anteprima
+  // e al file salvato, quindi si può cambiare in qualsiasi momento, anche a immagine finita.
+  const tone = { mode: 'color', bright: 100, contrast: 100, thr: 50, invert: false };
+  const toneEls = { mode: $('selTone'), bright: $('rngBright'), contrast: $('rngContrast'), thr: $('rngThr'), invert: $('chkInvert') };
+
+  // ctx.filter è veloce (GPU) ma manca in alcuni browser (Safari): lì si usa il calcolo pixel per pixel
+  const FILTER_OK = !window.__noFilter && (() => {
+    try {
+      const c = document.createElement('canvas'); c.width = c.height = 1;
+      const g = c.getContext('2d');
+      if (!('filter' in g)) return false;
+      g.filter = 'invert(1)'; g.fillStyle = '#000'; g.fillRect(0, 0, 1, 1);
+      return g.getImageData(0, 0, 1, 1).data[0] === 255;
+    } catch (e) { return false; }
+  })();
+
+  const toneActive = () => tone.mode !== 'color' || tone.bright !== 100 || tone.contrast !== 100 || tone.invert;
+
+  function toneFilter() {
+    const p = [];
+    if (tone.mode !== 'color') p.push('grayscale(1)');
+    if (tone.mode === 'bw') {
+      // contrasto altissimo dopo aver spostato la soglia a metà scala: sopra la soglia bianco, sotto nero
+      p.push('brightness(' + (0.5 / (tone.thr / 100)).toFixed(4) + ')', 'contrast(10000)');
+    } else {
+      if (tone.bright !== 100) p.push('brightness(' + tone.bright / 100 + ')');
+      if (tone.contrast !== 100) p.push('contrast(' + tone.contrast / 100 + ')');
+    }
+    if (tone.invert) p.push('invert(1)');
+    return p.length ? p.join(' ') : 'none';
+  }
+
+  // stesso risultato del filtro, calcolato sui pixel (a bande, per non usare troppa memoria)
+  function toneFallback(c, x, y, w, h) {
+    x = Math.max(0, Math.floor(x)); y = Math.max(0, Math.floor(y));
+    w = Math.min(c.canvas.width - x, Math.ceil(w)); h = Math.min(c.canvas.height - y, Math.ceil(h));
+    if (w <= 0 || h <= 0) return;
+    const b = tone.bright / 100, k = tone.contrast / 100, t = tone.thr / 100;
+    const lut = new Uint8ClampedArray(256);
+    for (let i = 0; i < 256; i++) {
+      let v = i / 255;
+      if (tone.mode === 'bw') v = v >= t ? 1 : 0;
+      else { v = Math.min(1, Math.max(0, v * b)); v = Math.min(1, Math.max(0, (v - 0.5) * k + 0.5)); }
+      if (tone.invert) v = 1 - v;
+      lut[i] = Math.round(v * 255);
+    }
+    const gray = tone.mode !== 'color';
+    const band = Math.max(1, Math.floor(4e6 / w));
+    for (let y0 = 0; y0 < h; y0 += band) {
+      const bh = Math.min(band, h - y0);
+      const id = c.getImageData(x, y + y0, w, bh), d = id.data;
+      for (let i = 0; i < d.length; i += 4) {
+        if (gray) { const g = Math.round(0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2]); d[i] = d[i + 1] = d[i + 2] = lut[g]; }
+        else { d[i] = lut[d[i]]; d[i + 1] = lut[d[i + 1]]; d[i + 2] = lut[d[i + 2]]; }
+      }
+      c.putImageData(id, x, y + y0);
+    }
+  }
+
+  // esegue il disegno con il tono applicato; rect è la zona toccata (serve solo senza ctx.filter)
+  function drawToned(c, rect, drawFn) {
+    if (!toneActive()) { drawFn(); return; }
+    if (FILTER_OK) { c.filter = toneFilter(); try { drawFn(); } finally { c.filter = 'none'; } }
+    else { drawFn(); toneFallback(c, rect.x, rect.y, rect.w, rect.h); }
+  }
+
+  const setRange = (el, min, max, v) => { el.min = min; el.max = max; el.value = v; };
+  function readTone() {
+    tone.mode = toneEls.mode.value;
+    tone.bright = val(toneEls.bright); tone.contrast = val(toneEls.contrast); tone.thr = val(toneEls.thr);
+    tone.invert = toneEls.invert.checked;
+  }
+  function syncToneUi() {
+    $('rowThr').hidden = tone.mode !== 'bw';
+    $('rowBright').hidden = $('rowContrast').hidden = tone.mode === 'bw';
+    $('outThr').textContent = tone.thr + '%';
+    $('outBright').textContent = tone.bright + '%';
+    $('outContrast').textContent = tone.contrast + '%';
+    ui.vTone.textContent = { color: 'Colore', gray: 'Grigi', bw: 'B/N' }[tone.mode];
+    ui.vTone.setAttribute('aria-pressed', String(tone.mode !== 'color'));
+    // cursore sopra l'immagine: la soglia in bianco e nero, il contrasto in grigi
+    if (tone.mode === 'bw') { ui.ovLabel.textContent = 'Soglia'; setRange(ui.ovRange, 5, 95, tone.thr); ui.ovOut.textContent = tone.thr + '%'; }
+    else if (tone.mode === 'gray') { ui.ovLabel.textContent = 'Contrasto'; setRange(ui.ovRange, 25, 300, tone.contrast); ui.ovOut.textContent = tone.contrast + '%'; }
+    ui.toneOv.hidden = tone.mode === 'color' || !hasAlloc;
+  }
+  function onToneChange() { readTone(); syncToneUi(); dirty = true; savePrefsSoon(); }
+
+  Object.values(toneEls).forEach(el => el.addEventListener('input', onToneChange));
+  toneEls.mode.addEventListener('change', onToneChange);
+  ui.ovRange.addEventListener('input', () => {
+    if (tone.mode === 'bw') toneEls.thr.value = ui.ovRange.value;
+    else if (tone.mode === 'gray') toneEls.contrast.value = ui.ovRange.value;
+    onToneChange();
+  });
+  const cycleTone = () => { toneEls.mode.value = { color: 'gray', gray: 'bw', bw: 'color' }[tone.mode]; onToneChange(); };
+  ui.vTone.addEventListener('click', cycleTone);
+  $('btnToneReset').addEventListener('click', () => {
+    toneEls.bright.value = 100; toneEls.contrast.value = 100; toneEls.thr.value = 50; toneEls.invert.checked = false;
+    onToneChange();
+  });
+
   // ---- buffer circolare ----------------------------------------------------------
   // Invece di spostare tutta l'immagine a ogni passo (costo proporzionale alla lunghezza),
-  // si scrive la nuova fessura nella posizione "head", che arretra a ogni passo.
+  // si scrive la nuova fessura nella posizione "head", che si sposta a ogni passo.
+  //  - verso →/↓: head arretra, la fessura nuova sta all'inizio dell'immagine (x = 0);
+  //  - verso ←/↑: head avanza, la fessura nuova sta in fondo all'immagine (x = lunghezza).
+  // In entrambi i casi la posizione x dell'immagine mostrata corrisponde al punto (head + x) del buffer.
   function neededSize() {
     return isCol() ? { w: len, h: camH } : { w: camW, h: len };
   }
@@ -291,29 +498,16 @@
   function clearBuffer() {
     rctx.fillStyle = ui.bg.value;
     rctx.fillRect(0, 0, ring.width, ring.height);
-    out.style.background = ui.bg.value;
     head = 0;
+    filled = 0;
+    wrapNotified = false;
+    passDone = false;
+    autoFull = false;
     hasContent = false;
     dirty = true;
   }
 
-  // adatta la dimensione dell'anteprima alla finestra (mai oltre la risoluzione dell'immagine)
-  function fitView() {
-    if (!ring.width || !ring.height) return;
-    const sw = ui.stage.clientWidth, sh = ui.stage.clientHeight;
-    if (!sw || !sh) return;
-    const s = Math.min(sw / ring.width, sh / ring.height);
-    const cssW = Math.max(1, Math.floor(ring.width * s));
-    const cssH = Math.max(1, Math.floor(ring.height * s));
-    const dpr = window.devicePixelRatio || 1;
-    out.style.width = cssW + 'px';
-    out.style.height = cssH + 'px';
-    out.width = Math.max(1, Math.min(ring.width, Math.round(cssW * dpr)));
-    out.height = Math.max(1, Math.min(ring.height, Math.round(cssH * dpr)));
-    dirty = true;
-  }
-
-  // riallocca solo se le dimensioni cambiano (altrimenti l'immagine continua)
+  // riallocca se le dimensioni o il verso cambiano (altrimenti l'immagine continua)
   function allocate() {
     let { w, h } = neededSize();
     // evita canvas troppo grandi per la memoria
@@ -324,20 +518,25 @@
       ({ w, h } = neededSize());
       setStatus('Lunghezza ridotta a ' + len + ' px per limiti di memoria.', true, 5000);
     }
-    if (!hasAlloc || ring.width !== w || ring.height !== h) {
+    const col = isCol(), rev = isRev();
+    if (!hasAlloc || ring.width !== w || ring.height !== h || ringCol !== col || ringRev !== rev) {
       ring.width = w;
       ring.height = h;
+      ringCol = col;
+      ringRev = rev;
       hasAlloc = true;
       clearBuffer();
-      fitView();
+      sizeCanvas();
     }
   }
 
-  // Disegna su c (dimensione dw×dh) il tratto [s, e) dell'immagine "srotolata" (fessura più recente
-  // all'inizio). Senza s ed e disegna tutta l'immagine.
+  const ringLen = () => ringCol ? ring.width : ring.height;     // lunghezza lungo lo scorrimento
+
+  // Disegna su c (dimensione dw×dh) il tratto [s, e) dell'immagine "srotolata", a scala 1:1.
+  // Serve per il salvataggio; senza s ed e disegna tutta l'immagine.
   function unrollTo(c, dw, dh, s = 0, e = null) {
-    const col = isCol();
-    const L = col ? ring.width : ring.height;       // lunghezza lungo lo scorrimento
+    const col = ringCol;
+    const L = ringLen();
     if (e === null) e = L;
     c.fillStyle = ui.bg.value;
     c.fillRect(0, 0, dw, dh);
@@ -349,48 +548,294 @@
       else c.drawImage(ring, 0, srcPos, ring.width, srcLen, 0, dstPos, dw, dstLen);
     };
     const b1 = Math.min(e, u0);
-    if (b1 > s) draw(head + s, b1 - s, s);
     const a2 = Math.max(s, u0);
-    if (e > a2) draw(a2 - u0, e - a2, a2);
+    drawToned(c, { x: 0, y: 0, w: dw, h: dh }, () => {
+      if (b1 > s) draw(head + s, b1 - s, s);
+      if (e > a2) draw(a2 - u0, e - a2, a2);
+    });
+  }
+
+  // ---- vista: intera, coda, libera (zoom e spostamento) ------------------------------
+  // Coordinate: A = lungo lo scorrimento, C = trasversale. Per le colonne A è x, per le righe A è y.
+  function sizeCanvas() {
+    const dpr = window.devicePixelRatio || 1;
+    const w = Math.max(1, Math.round(ui.stage.clientWidth * dpr));
+    const h = Math.max(1, Math.round(ui.stage.clientHeight * dpr));
+    if (out.width !== w || out.height !== h) { out.width = w; out.height = h; }
+    sizePip();
+    dirty = true;
+  }
+
+  function computeView(mode) {
+    const col = ringCol;
+    const La = col ? ring.width : ring.height, Lc = col ? ring.height : ring.width;
+    const Sa = col ? out.width : out.height, Sc = col ? out.height : out.width;
+    let vs, offA, offC;
+    if (mode === 'free') {
+      ({ vs, offA, offC } = view);
+    } else if (mode === 'tail') {
+      vs = Sc / Lc;                                   // la dimensione trasversale riempie lo schermo
+      const vis = Sa / vs;
+      offC = 0;
+      offA = vis >= La ? (La - vis) / 2 : (ringRev ? La - vis : 0);   // segue il bordo dove nasce l'immagine
+    } else {
+      vs = Math.min(Sa / La, Sc / Lc);
+      offA = (La - Sa / vs) / 2;
+      offC = (Lc - Sc / vs) / 2;
+    }
+    return { vs, offA, offC, La, Lc, Sa, Sc, col };
   }
 
   function renderView() {
-    if (!dirty || !hasAlloc) return;
+    if (!dirty) return;
     dirty = false;
-    unrollTo(ctx, out.width, out.height);
+    ctx.fillStyle = STAGE_COLOR;
+    ctx.fillRect(0, 0, out.width, out.height);
+    if (!hasAlloc) return;
+    const v = computeView(viewMode);
+    ctx.imageSmoothingEnabled = v.vs < 1;             // ingrandendo si vedono i pixel netti
+    ctx.imageSmoothingQuality = 'high';
+    const a0 = Math.max(0, v.offA), a1 = Math.min(v.La, v.offA + v.Sa / v.vs);
+    const c0 = Math.max(0, v.offC), c1 = Math.min(v.Lc, v.offC + v.Sc / v.vs);
+    if (a1 <= a0 || c1 <= c0) return;
+    const D = (u, off) => Math.round((u - off) * v.vs);   // posizioni intere: nessuna linea sottile tra i due tratti
+    const dc0 = D(c0, v.offC), dc1 = D(c1, v.offC);
+    const u0 = v.La - head;                           // punto dell'immagine dove il buffer si avvolge
+    const piece = (ua, ub, srcPos) => {
+      if (ub <= ua) return;
+      const da0 = D(ua, v.offA), da1 = D(ub, v.offA);
+      if (da1 <= da0) return;
+      if (v.col) ctx.drawImage(ring, srcPos, c0, ub - ua, c1 - c0, da0, dc0, da1 - da0, dc1 - dc0);
+      else ctx.drawImage(ring, c0, srcPos, c1 - c0, ub - ua, dc0, da0, dc1 - dc0, da1 - da0);
+    };
+    const da0 = D(a0, v.offA), da1 = D(a1, v.offA);
+    const rect = v.col ? { x: da0, y: dc0, w: da1 - da0, h: dc1 - dc0 } : { x: dc0, y: da0, w: dc1 - dc0, h: da1 - da0 };
+    drawToned(ctx, rect, () => {
+      piece(a0, Math.min(a1, u0), head + a0);
+      piece(Math.max(a0, u0), a1, Math.max(a0, u0) - u0);
+    });
+  }
+
+  function syncViewButtons() {
+    ui.vFit.setAttribute('aria-pressed', String(viewMode === 'fit'));
+    ui.vTail.setAttribute('aria-pressed', String(viewMode === 'tail'));
+    ui.v11.setAttribute('aria-pressed', String(viewMode === 'free' && Math.abs(view.vs - 1) < 1e-6));
+    ui.stage.classList.toggle('free', viewMode === 'free');
+  }
+
+  function setViewMode(m) {
+    viewMode = m;
+    dirty = true;
+    syncViewButtons();
+    savePrefs();
+  }
+
+  function enterFree() {
+    if (viewMode === 'free') return;
+    const v = computeView(viewMode);
+    view = { vs: v.vs, offA: v.offA, offC: v.offC };
+    viewMode = 'free';
+    syncViewButtons();
+  }
+
+  function clampView() {
+    const v = computeView('free');
+    const fit = Math.min(v.Sa / v.La, v.Sc / v.Lc);
+    view.vs = clamp(view.vs, fit * 0.5, 48);
+    const visA = v.Sa / view.vs, visC = v.Sc / view.vs;
+    const mA = Math.min(visA, v.La) * 0.15, mC = Math.min(visC, v.Lc) * 0.15;
+    view.offA = clamp(view.offA, mA - visA, v.La - mA);
+    view.offC = clamp(view.offC, mC - visC, v.Lc - mC);
+  }
+
+  // px, py: punto fisso (in pixel del canvas) attorno a cui si ingrandisce
+  function zoomAt(f, px, py) {
+    if (!hasAlloc) return;
+    enterFree();
+    const pa = ringCol ? px : py, pc = ringCol ? py : px;
+    const ia = view.offA + pa / view.vs, ic = view.offC + pc / view.vs;
+    view.vs *= f;
+    clampView();
+    view.offA = ia - pa / view.vs;
+    view.offC = ic - pc / view.vs;
+    clampView();
+    dirty = true;
+  }
+
+  function panBy(dx, dy) {   // dx, dy in pixel del canvas
+    if (!hasAlloc) return;
+    enterFree();
+    view.offA -= (ringCol ? dx : dy) / view.vs;
+    view.offC -= (ringCol ? dy : dx) / view.vs;
+    clampView();
+    dirty = true;
+  }
+
+  function oneToOne() {
+    if (!hasAlloc) return;
+    const v = computeView(viewMode);
+    view = { vs: 1, offA: ringRev ? v.La - v.Sa : 0, offC: (v.Lc - v.Sc) / 2 };
+    viewMode = 'free';
+    clampView();
+    syncViewButtons();
+    dirty = true;
+  }
+
+  ui.vFit.addEventListener('click', () => setViewMode('fit'));
+  ui.vTail.addEventListener('click', () => setViewMode('tail'));
+  ui.v11.addEventListener('click', oneToOne);
+
+  // gesti: trascinamento, rotella, pizzico, doppio tocco
+  (function gestures() {
+    const ptrs = new Map();
+    let g = null, lastTap = 0;
+    const toCanvas = (cx, cy) => {
+      const r = out.getBoundingClientRect();
+      return { x: (cx - r.left) * out.width / r.width, y: (cy - r.top) * out.height / r.height };
+    };
+    const k = () => out.width / (out.getBoundingClientRect().width || 1);
+    const ignore = (e) => !!(e.target.closest && e.target.closest('#vbar, #toneOv'));
+
+    ui.stage.addEventListener('pointerdown', (e) => {
+      if (ignore(e) || !hasAlloc) return;
+      try { ui.stage.setPointerCapture(e.pointerId); } catch (err) { /* non supportato */ }
+      ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (ptrs.size === 1) g = { t: performance.now(), moved: 0, multi: false };
+      else if (g) g.multi = true;
+      ui.stage.classList.add('drag');
+    });
+    ui.stage.addEventListener('pointermove', (e) => {
+      const p = ptrs.get(e.pointerId);
+      if (!p) return;
+      const nx = e.clientX, ny = e.clientY;
+      if (ptrs.size === 1) {
+        const dx = (nx - p.x) * k(), dy = (ny - p.y) * k();
+        if (g) g.moved += Math.abs(dx) + Math.abs(dy);
+        if (g && g.moved > 6 * k()) panBy(dx, dy);
+      } else if (ptrs.size === 2) {
+        const other = [...ptrs.entries()].find(([id]) => id !== e.pointerId)[1];
+        const d0 = Math.hypot(p.x - other.x, p.y - other.y), d1 = Math.hypot(nx - other.x, ny - other.y);
+        const m0 = { x: (p.x + other.x) / 2, y: (p.y + other.y) / 2 }, m1 = { x: (nx + other.x) / 2, y: (ny + other.y) / 2 };
+        panBy((m1.x - m0.x) * k(), (m1.y - m0.y) * k());
+        if (d0 > 8 && d1 > 8) { const c = toCanvas(m1.x, m1.y); zoomAt(d1 / d0, c.x, c.y); }
+        if (g) g.moved += 100;
+      }
+      p.x = nx; p.y = ny;
+    });
+    const up = (e) => {
+      if (!ptrs.has(e.pointerId)) return;
+      ptrs.delete(e.pointerId);
+      if (!ptrs.size) {
+        ui.stage.classList.remove('drag');
+        if (g && !g.multi && g.moved < 6 * k() && performance.now() - g.t < 300) {   // tocco breve
+          const now = performance.now();
+          if (now - lastTap < 350) { lastTap = 0; setViewMode(viewMode === 'fit' ? 'tail' : 'fit'); }
+          else lastTap = now;
+        }
+        g = null;
+      }
+    };
+    ui.stage.addEventListener('pointerup', up);
+    ui.stage.addEventListener('pointercancel', up);
+    ui.stage.addEventListener('wheel', (e) => {
+      if (ignore(e) || !hasAlloc) return;
+      e.preventDefault();
+      const c = toCanvas(e.clientX, e.clientY);
+      zoomAt(Math.exp(-e.deltaY * (e.deltaMode === 1 ? 0.05 : 0.0015)), c.x, c.y);
+    }, { passive: false });
+  })();
+
+  // ---- anteprima della camera con la fessura ------------------------------------------------
+  function sizePip() {
+    if (!camW || !camH) return;
+    const dpr = window.devicePixelRatio || 1;
+    const side = clamp(Math.min(ui.stage.clientWidth, ui.stage.clientHeight) * 0.34, 100, 240);
+    const cw = camW >= camH ? side : side * camW / camH;
+    const ch = camW >= camH ? side * camH / camW : side;
+    pip.style.width = Math.round(cw) + 'px';
+    pip.style.height = Math.round(ch) + 'px';
+    const w = Math.max(2, Math.round(cw * dpr)), h = Math.max(2, Math.round(ch * dpr));
+    if (pip.width !== w || pip.height !== h) { pip.width = w; pip.height = h; }
+  }
+
+  function syncPip() { pip.hidden = !(running && ui.pipOn.checked); }
+
+  function drawPip(src, sw, sh, f) {
+    const now = performance.now();
+    if (now - lastPip < 50) return;                   // al massimo 20 aggiornamenti al secondo
+    lastPip = now;
+    const pw = pip.width, ph = pip.height;
+    // l'anteprima mostra la camera già con il tono scelto, utile per regolare la soglia
+    if (FILTER_OK && toneActive()) pctx.filter = toneFilter();
+    pctx.drawImage(src, 0, 0, sw, sh, 0, 0, pw, ph);
+    pctx.filter = 'none';
+    pctx.fillStyle = 'rgba(255,213,74,.30)';
+    pctx.strokeStyle = '#ffd54a';
+    pctx.lineWidth = 1;
+    if (ringCol) {
+      const x = Math.floor((sw / 2 - f / 2) / sw * pw), w = Math.max(1, Math.round(f / sw * pw));
+      pctx.fillRect(x, 0, w, ph);
+      pctx.beginPath(); pctx.moveTo(x + .5, 0); pctx.lineTo(x + .5, ph); pctx.moveTo(x + w - .5, 0); pctx.lineTo(x + w - .5, ph); pctx.stroke();
+    } else {
+      const y = Math.floor((sh / 2 - f / 2) / sh * ph), h = Math.max(1, Math.round(f / sh * ph));
+      pctx.fillRect(0, y, pw, h);
+      pctx.beginPath(); pctx.moveTo(0, y + .5); pctx.lineTo(pw, y + .5); pctx.moveTo(0, y + h - .5); pctx.lineTo(pw, y + h - .5); pctx.stroke();
+    }
   }
 
   // ---- acquisizione ------------------------------------------------------------
   // src: <video> o VideoFrame; sw, sh: dimensioni reali del fotogramma
   function step(src, sw, sh) {
-    const f = getFascia();
+    const col = ringCol, L = ringLen();
     const W = ring.width, H = ring.height;
-    if (isCol()) {
-      head = (head - f + W) % W;
+    let f = getFascia();
+    if (oncePass() && filled + f > L) f = L - filled;    // ultima fessura, più stretta
+    if (f <= 0) { passDone = true; return; }
+    let pos;
+    if (!ringRev) { head = (head - f + L) % L; pos = head; }  // →/↓: la nuova fessura va all'inizio
+    else { pos = head; head = (head + f) % L; }               // ←/↑: la nuova fessura va in fondo
+    const first = Math.min(f, L - pos);                       // se supera la fine, continua dall'inizio
+    if (ui.mirror.checked) {
+      if (col) rctx.setTransform(1, 0, 0, -1, 0, H); else rctx.setTransform(-1, 0, 0, 1, W, 0);
+    }
+    if (col) {
       const sx = Math.floor(sw / 2 - f / 2);
-      const first = Math.min(f, W - head);
-      rctx.drawImage(src, sx, 0, first, sh, head, 0, first, H);
+      rctx.drawImage(src, sx, 0, first, sh, pos, 0, first, H);
       if (first < f) rctx.drawImage(src, sx + first, 0, f - first, sh, 0, 0, f - first, H);
     } else {
-      head = (head - f + H) % H;
       const sy = Math.floor(sh / 2 - f / 2);
-      const first = Math.min(f, H - head);
-      rctx.drawImage(src, 0, sy, sw, first, 0, head, W, first);
+      rctx.drawImage(src, 0, sy, sw, first, 0, pos, W, first);
       if (first < f) rctx.drawImage(src, 0, sy + first, sw, f - first, 0, 0, W, f - first);
     }
+    if (ui.mirror.checked) rctx.setTransform(1, 0, 0, 1, 0, 0);
+    if (viewMode === 'free') view.offA += ringRev ? -f : f;   // la vista libera resta ferma sul contenuto
+    filled = Math.min(L, filled + f);
     steps++;
     hasContent = true;
     dirty = true;
+    if (filled >= L) {
+      if (oncePass()) passDone = true;
+      else if (ui.auto.checked) autoFull = true;
+      else if (!wrapNotified) { wrapNotified = true; setStatus('Buffer pieno: da ora le parti più vecchie vengono sovrascritte.', false, 5000); }
+    }
   }
 
   // now: tempo del fotogramma in ms
   function onFrame(now, src, sw, sh) {
     frames++;
+    if (saving) return;                                       // salvataggio automatico in corso: pausa breve
+    if (ui.pipOn.checked) drawPip(src, sw, sh, getFascia());
     const T = val(ui.time);
     if (now - lastShift >= T) {
       // mantiene il ritmo medio di 1000/T passi al secondo senza arrotondare al periodo del frame
       lastShift = (T > 0 && now - lastShift < 2 * T) ? lastShift + T : now;
       step(src, sw, sh);
+    }
+    if (autoFull && !saving) autoSaveCycle();
+    if (passDone) {
+      passDone = false;
+      stop();
+      setStatus('Immagine completa: acquisizione terminata. Salva, poi Cancella per una nuova passata.', false, 12000);
     }
   }
 
@@ -429,15 +874,25 @@
     }
   }
 
-  // ciclo di interfaccia: ridisegna l'anteprima e aggiorna le statistiche
+  // ciclo di interfaccia: ridisegna la vista, la barra di riempimento e le statistiche
+  let lastPct = -1;
   function uiLoop(t) {
     renderView();
+    drawRec(t);
+    const pct = hasAlloc ? Math.floor(filled / ringLen() * 100) : 0;
+    if (pct !== lastPct) {
+      lastPct = pct;
+      ui.fillbar.firstElementChild.style.width = pct + '%';
+      ui.fillbar.classList.toggle('full', pct >= 100);
+    }
+    ui.vbar.hidden = !hasAlloc;
+    ui.toneOv.hidden = tone.mode === 'color' || !hasAlloc;
     if (running && t - statT >= 1000) {
       if (statT && t >= statusHold) {
         const secs = (t - statT) / 1000;
-        setStatus(`Acquisizione: ${camW}×${camH}, ${isCol() ? 'colonna' : 'riga'} — ` +
+        setStatus(`Acquisizione: ${camW}×${camH}, ${ringCol ? 'colonna' : 'riga'} — ` +
                   `camera dichiara ${camFps ? Math.round(camFps) : '?'} fps, ricevuti ${(frames / secs).toFixed(0)} fps, ` +
-                  `passi ${(steps / secs).toFixed(0)}/s` +
+                  `passi ${(steps / secs).toFixed(0)}/s, immagine ${pct}%` +
                   (hasMSTP ? '.' : ' (lettura sincronizzata allo schermo).'));
       }
       frames = 0; steps = 0; statT = t;
@@ -477,7 +932,7 @@
       if (!devs.length) ui.cam.innerHTML = '<option value="">Nessuna fotocamera</option>';
       ui.cam.value = want;
       if (ui.cam.value !== want && devs.length) ui.cam.selectedIndex = 0;
-      ui.flip.hidden = devs.length < 2;
+      ui.camFlip.hidden = devs.length < 2;
     } catch (e) { /* elenco non disponibile: resta "Predefinita" */ }
   }
 
@@ -712,6 +1167,11 @@
   }
 
   async function start() {
+    // con "una passata" un'immagine già completa non si riavvia: prima va salvata e cancellata
+    if (oncePass() && hasAlloc && filled >= ringLen() && ringCol === isCol() && ringRev === isRev()) {
+      setStatus('L\'immagine è già completa. Salvala e premi Cancella per una nuova passata.', true, 8000);
+      return;
+    }
     const myToken = ++token;
     running = false;
     stopStream();
@@ -767,9 +1227,12 @@
       ui.len.value = len;
       updateFasciaMax();
       allocate();
+      sizePip();
+      syncPrint();
       savePrefs();
 
       running = true;
+      syncPip();
       lastShift = -Infinity;
       lastMediaTime = -1;
       frames = 0; steps = 0; statT = 0;
@@ -777,6 +1240,7 @@
       ui.start.classList.add('on');
       setStatus('Acquisizione avviata…');
       lockScreen();
+      if (ui.autoVid.checked && REC_OK && !rec) startRec(true);
 
       if (hasMSTP) {
         // le dimensioni sono note: il video nascosto non serve più e si evita di decodificarlo due volte
@@ -789,6 +1253,7 @@
     } catch (e) {
       if (myToken !== token) return;
       running = false;
+      syncPip();
       ui.start.textContent = 'Avvia';
       ui.start.classList.remove('on');
       setStatus('Impossibile accedere alla fotocamera: ' + e.message +
@@ -799,9 +1264,11 @@
   function stop() {
     running = false;
     token++;
+    if (rec && rec.endWithStop) stopRec();
     stopStream();                         // spegne la fotocamera, l'immagine resta
     camState.torch = false;               // la torcia si spegne con la camera
     ui.secCam.hidden = true;
+    syncPip();
     unlockScreen();
     ui.start.textContent = 'Avvia';
     ui.start.classList.remove('on');
@@ -813,12 +1280,14 @@
   const extOf = (type) => type === 'image/jpeg' ? 'jpg' : type === 'image/webp' ? 'webp' : 'png';
 
   // Prepara l'immagine in un solo file; se è troppo grande per il browser la divide in parti.
+  // Nei PNG e nei JPEG inserisce i dpi di stampa e i parametri usati (per ripetere l'acquisizione).
   async function makeImages() {
-    const col = isCol();
-    const L = col ? ring.width : ring.height;
+    const col = ringCol;
+    const L = ringLen();
     const mime = 'image/' + ui.fmt.value;
     const q = clamp(val(ui.quality), 10, 100) / 100;
     const stamp = Date.now();
+    const dpi = dpiVal();
     let n = Math.max(1, Math.ceil(ring.width * ring.height / SINGLE_MAX));
     for (; n <= 32; n = n < 2 ? 2 : n * 2) {
       const parts = [];
@@ -829,9 +1298,14 @@
         t.width = col ? e - s : ring.width;
         t.height = col ? ring.height : e - s;
         unrollTo(t.getContext('2d'), t.width, t.height, s, e);
-        const blob = await toBlob(t, mime, q);
+        let blob = await toBlob(t, mime, q);
+        const size = [t.width, t.height];
         t.width = t.height = 0;           // libera subito la memoria
         if (!blob) { ok = false; break; }
+        try {
+          const meta = paramsObject(n > 1 ? { part: i + 1, parts: n, size } : { size });
+          blob = await embedMeta(blob, dpi, meta);
+        } catch (err) { /* senza metadati il file resta valido */ }
         parts.push({ name: `slitcam_${stamp}${n > 1 ? '_parte' + (i + 1) : ''}.${extOf(blob.type)}`, blob });
       }
       if (ok) return parts;
@@ -839,21 +1313,29 @@
     return null;
   }
 
+  function downloadBlob(blob, name) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 30000);
+  }
+
+  async function downloadParts(parts) {
+    for (const p of parts) {
+      downloadBlob(p.blob, p.name);
+      if (parts.length > 1) await sleep(300);
+    }
+  }
+
   async function save() {
     if (!hasAlloc) return;
     setStatus('Preparazione del file…', false, 60000);
     const parts = await makeImages();
     if (!parts) { setStatus('Salvataggio non riuscito: immagine troppo grande per questo browser. Riduci la lunghezza.', true, 8000); return; }
-    for (const p of parts) {
-      const url = URL.createObjectURL(p.blob);
-      const a = document.createElement('a');
-      a.href = url; a.download = p.name;
-      document.body.appendChild(a); a.click(); a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 30000);
-      if (parts.length > 1) await sleep(300);
-    }
+    await downloadParts(parts);
     setStatus(parts.length > 1
-      ? `Salvato in ${parts.length} parti (la parte 1 è il lato più recente) — ${ring.width}×${ring.height}.`
+      ? `Salvato in ${parts.length} parti (la parte 1 è l'inizio dell'immagine) — ${ring.width}×${ring.height}.`
       : `Salvato: ${parts[0].name} — ${ring.width}×${ring.height}, ${(parts[0].blob.size / 1e6).toFixed(1)} MB.`, false, 6000);
   }
 
@@ -880,13 +1362,310 @@
     catch (e) { return false; }
   }
 
+  // ---- stampa: lunghezza in cm e dpi ----------------------------------------------------
+  // I pixel restano il valore di riferimento; i cm si calcolano dai dpi (e viceversa).
+  const dpiVal = () => clamp(parseInt(ui.dpi.value, 10) || 300, 50, 1200);
+  function syncPrint() {
+    const dpi = dpiVal();
+    const L = readLen();
+    if (document.activeElement !== ui.cm) ui.cm.value = (L / dpi * 2.54).toFixed(1);
+    let txt = `Lunghezza ${L} px = ${(L / dpi * 2.54).toFixed(1)} cm a ${dpi} dpi.`;
+    if (hasAlloc && ringLen() === L) txt = `Immagine finale: ${ring.width}×${ring.height} px = ${(ring.width / dpi * 2.54).toFixed(1)}×${(ring.height / dpi * 2.54).toFixed(1)} cm a ${dpi} dpi.`;
+    ui.printInfo.textContent = txt;
+  }
+  ui.cm.addEventListener('change', () => {
+    const cm = parseFloat(String(ui.cm.value).replace(',', '.'));
+    if (!(cm > 0)) { syncPrint(); return; }
+    ui.len.value = clamp(Math.round(cm * dpiVal() / 2.54), 200, MAX_LEN);
+    ui.len.dispatchEvent(new Event('change'));
+    syncPrint();
+  });
+  ui.dpi.addEventListener('change', () => { ui.dpi.value = dpiVal(); syncPrint(); });
+  ui.len.addEventListener('change', syncPrint);
+
+  // ---- metadati nei file: dpi e parametri ------------------------------------------------
+  const CRC_T = (() => {
+    const t = new Uint32Array(256);
+    for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; }
+    return t;
+  })();
+  const crc32 = (u8) => { let c = 0xFFFFFFFF; for (let i = 0; i < u8.length; i++) c = CRC_T[(c ^ u8[i]) & 255] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; };
+  const asciiJson = (o) => JSON.stringify(o).replace(/[^\x20-\x7e]/g, ch => '\\u' + ch.charCodeAt(0).toString(16).padStart(4, '0'));
+  const latin1 = (str) => { const u = new Uint8Array(str.length); for (let i = 0; i < str.length; i++) u[i] = str.charCodeAt(i) & 255; return u; };
+
+  function paramsObject(extra) {
+    return Object.assign({
+      app: 'SlitCam', version: 1, date: new Date().toISOString(),
+      mode: (ringCol ? 'col' : 'row') + (ringRev ? '-rev' : ''), fascia: getFascia(), time: val(ui.time),
+      len: hasAlloc ? ringLen() : readLen(), mirror: ui.mirror.checked, bg: ui.bg.value, fps: ui.fps.value, res: ui.res.value,
+      camSize: [camW, camH], dpi: dpiVal(), tone: { ...tone }
+    }, extra || {});
+  }
+
+  function pngChunk(type, data) {
+    const b = new Uint8Array(12 + data.length), dv = new DataView(b.buffer);
+    dv.setUint32(0, data.length);
+    for (let i = 0; i < 4; i++) b[4 + i] = type.charCodeAt(i);
+    b.set(data, 8);
+    dv.setUint32(8 + data.length, crc32(b.subarray(4, 8 + data.length)));
+    return b;
+  }
+
+  async function embedPng(blob, dpi, json) {
+    const head = new Uint8Array(await blob.slice(0, 65536).arrayBuffer());
+    const dv = new DataView(head.buffer);
+    if (head.length < 33 || head[1] !== 0x50) return blob;
+    // chunk prima di IDAT (IHDR escluso), meno un eventuale pHYs già presente
+    const keep = [];
+    let off = 33, idat = 33;
+    while (off + 12 <= head.length) {
+      const l = dv.getUint32(off);
+      const type = String.fromCharCode(head[off + 4], head[off + 5], head[off + 6], head[off + 7]);
+      if (type === 'IDAT') { idat = off; break; }
+      if (off + 12 + l > head.length) { idat = 33; keep.length = 0; break; }   // ricerca non conclusiva: nessuna rimozione
+      if (type !== 'pHYs') keep.push(head.subarray(off, off + 12 + l));
+      off += 12 + l; idat = off;
+    }
+    const ppm = Math.round(dpi / 0.0254);
+    const phys = new Uint8Array(9), pv = new DataView(phys.buffer);
+    pv.setUint32(0, ppm); pv.setUint32(4, ppm); phys[8] = 1;
+    const txt = latin1('SlitCam\0' + json);
+    return new Blob([head.subarray(0, 33), pngChunk('pHYs', phys), pngChunk('tEXt', txt), ...keep, blob.slice(idat)], { type: 'image/png' });
+  }
+
+  async function embedJpeg(blob, dpi, json) {
+    const head = new Uint8Array(await blob.slice(0, 64).arrayBuffer());
+    if (head[0] !== 0xFF || head[1] !== 0xD8) return blob;
+    const com = latin1('SlitCam:' + json);
+    if (com.length > 65000) return blob;
+    const comSeg = new Uint8Array(4 + com.length);
+    comSeg[0] = 0xFF; comSeg[1] = 0xFE; comSeg[2] = (com.length + 2) >> 8; comSeg[3] = (com.length + 2) & 255;
+    comSeg.set(com, 4);
+    let first, rest;
+    const isJfif = head[2] === 0xFF && head[3] === 0xE0 && head[6] === 0x4A && head[7] === 0x46 && head[8] === 0x49 && head[9] === 0x46;
+    if (isJfif) {
+      const end = 4 + ((head[4] << 8) | head[5]);
+      if (end > head.length || end < 18) return blob;
+      first = head.slice(0, end);
+      first[13] = 1; first[14] = dpi >> 8; first[15] = dpi & 255; first[16] = dpi >> 8; first[17] = dpi & 255;
+      rest = blob.slice(end);
+    } else {
+      first = new Uint8Array([0xFF, 0xD8, 0xFF, 0xE0, 0, 16, 0x4A, 0x46, 0x49, 0x46, 0, 1, 1, 1, dpi >> 8, dpi & 255, dpi >> 8, dpi & 255, 0, 0]);
+      rest = blob.slice(2);
+    }
+    return new Blob([first, comSeg, rest], { type: 'image/jpeg' });
+  }
+
+  async function embedMeta(blob, dpi, meta) {
+    const json = asciiJson(meta);
+    if (blob.type === 'image/png') return embedPng(blob, dpi, json);
+    if (blob.type === 'image/jpeg') return embedJpeg(blob, dpi, json);
+    return blob;
+  }
+
+  // legge i parametri da un file SlitCam (JSON, PNG o JPEG con metadati)
+  async function readParamsFile(file) {
+    const u8 = new Uint8Array(await file.slice(0, 262144).arrayBuffer());
+    const dec = (a) => String.fromCharCode.apply(null, a);
+    if (u8[0] === 0x89 && u8[1] === 0x50) {                                   // PNG
+      const dv = new DataView(u8.buffer);
+      for (let off = 8; off + 12 <= u8.length;) {
+        const l = dv.getUint32(off), type = dec(u8.subarray(off + 4, off + 8));
+        if (type === 'tEXt' && off + 12 + l <= u8.length) {
+          const t = dec(u8.subarray(off + 8, off + 8 + l));
+          if (t.startsWith('SlitCam\0')) return JSON.parse(t.slice(8));
+        }
+        if (type === 'IDAT') break;
+        off += 12 + l;
+      }
+    } else if (u8[0] === 0xFF && u8[1] === 0xD8) {                            // JPEG
+      for (let off = 2; off + 4 <= u8.length && u8[off] === 0xFF;) {
+        const mk = u8[off + 1], l = (u8[off + 2] << 8) | u8[off + 3];
+        if (mk === 0xFE && off + 2 + l <= u8.length) {
+          const t = dec(u8.subarray(off + 4, off + 2 + l));
+          if (t.startsWith('SlitCam:')) return JSON.parse(t.slice(8));
+        }
+        if (mk === 0xDA) break;
+        off += 2 + l;
+      }
+    } else {
+      try { return JSON.parse(await file.text()); } catch (e) { /* non è JSON */ }
+    }
+    throw new Error('nessun parametro SlitCam in questo file');
+  }
+
+  function setSelect(el, v) { if (v != null && [...el.options].some(o => o.value === String(v))) el.value = v; }
+  function applyToneObj(t) {
+    if (!t) return;
+    setSelect(toneEls.mode, t.mode);
+    toneEls.bright.value = clamp(parseInt(t.bright, 10) || 100, 25, 200);
+    toneEls.contrast.value = clamp(parseInt(t.contrast, 10) || 100, 25, 300);
+    toneEls.thr.value = clamp(parseInt(t.thr, 10) || 50, 5, 95);
+    toneEls.invert.checked = !!t.invert;
+    readTone(); syncToneUi(); dirty = true;
+  }
+
+  function applyParams(o) {
+    if (!o || o.app !== 'SlitCam') throw new Error('parametri non riconosciuti');
+    setSelect(ui.mode, o.mode);
+    setSelect(ui.fps, o.fps);
+    if (typeof o.res === 'string' && /^(max|\d+x\d+)$/.test(o.res)) {
+      if (![...ui.res.options].some(x => x.value === o.res)) {
+        const op = document.createElement('option');
+        op.value = o.res; op.textContent = o.res.replace('x', '×');
+        ui.res.appendChild(op);
+      }
+      ui.res.value = o.res;
+    }
+    if (o.len) { ui.len.value = clamp(parseInt(o.len, 10) || len, 200, MAX_LEN); len = readLen(); ui.len.value = len; }
+    if (o.fascia) ui.fascia.value = clamp(parseInt(o.fascia, 10) || 1, 1, 16000);
+    if (o.time != null) ui.time.value = clamp(parseInt(o.time, 10) || 0, 0, 500);
+    if (o.mirror != null) ui.mirror.checked = !!o.mirror;
+    if (typeof o.bg === 'string' && /^#[0-9a-f]{6}$/i.test(o.bg)) ui.bg.value = o.bg;
+    if (o.dpi) ui.dpi.value = clamp(parseInt(o.dpi, 10) || 300, 50, 1200);
+    applyToneObj(o.tone);
+    if (camW) updateFasciaMax();
+    syncOutputs(); syncPrint();
+    savePrefs();
+  }
+
+  async function importParams(file) {
+    if (!file) return;
+    if (running) { setStatus('Ferma l\'acquisizione prima di caricare i parametri.', true, 6000); return; }
+    try {
+      applyParams(await readParamsFile(file));
+      if (hasAlloc && !hasContent) clearBuffer();
+      setStatus('Parametri caricati da ' + file.name + '. Premi Avvia per ripetere l\'acquisizione.', false, 7000);
+    } catch (e) {
+      setStatus('Importazione non riuscita: ' + e.message + '.', true, 7000);
+    }
+  }
+
+  function exportParams() {
+    const blob = new Blob([JSON.stringify(paramsObject(), null, 2)], { type: 'application/json' });
+    downloadBlob(blob, `slitcam_parametri_${Date.now()}.json`);
+    setStatus('Parametri esportati.', false, 3000);
+  }
+
+  // ---- salvataggio automatico (modo installazione) ----------------------------------------
+  // Quando l'immagine è piena la salva, la cancella e riparte. Durante la codifica la cattura
+  // si ferma per qualche istante.
+  const oncePass = () => ui.once.checked && !ui.auto.checked;
+  function syncAuto() { ui.once.disabled = ui.auto.checked; }
+
+  async function autoSaveCycle() {
+    autoFull = false;
+    saving = true;
+    try {
+      setStatus('Immagine piena: salvo e riparto…', false, 60000);
+      const parts = await makeImages();
+      if (!parts) throw new Error('immagine troppo grande per questo browser');
+      await downloadParts(parts);
+      autoCount++;
+      if (running) { clearBuffer(); lastShift = -Infinity; }
+      setStatus(`Salvataggio automatico n. ${autoCount}: ${parts[0].name}${parts.length > 1 ? ' (+' + (parts.length - 1) + ' parti)' : ''}. Riparto da zero.`, false, 6000);
+    } catch (e) {
+      ui.auto.checked = false; syncAuto();
+      setStatus('Salvataggio automatico non riuscito (' + e.message + '): disattivato.', true, 10000);
+    } finally {
+      saving = false;
+    }
+  }
+
+  // ---- registrazione video della formazione dell'immagine ----------------------------------
+  const REC_OK = typeof MediaRecorder === 'function' && !!HTMLCanvasElement.prototype.captureStream;
+  const REC_MAX_BYTES = 350e6;
+  function pickMime() {
+    const c = ['video/mp4;codecs=avc1.42E01E', 'video/mp4', 'video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'];
+    return c.find(m => { try { return MediaRecorder.isTypeSupported(m); } catch (e) { return false; } }) || '';
+  }
+
+  function startRec(auto) {
+    if (!REC_OK || rec || !hasAlloc) return;
+    const maxSide = Math.min(parseInt(ui.vq.value, 10) || 1280, Math.max(out.width, out.height));
+    const ar = out.width / out.height;
+    let w = ar >= 1 ? maxSide : maxSide * ar, h = ar >= 1 ? maxSide / ar : maxSide;
+    w = Math.max(16, Math.round(w / 2) * 2); h = Math.max(16, Math.round(h / 2) * 2);
+    const canvas = document.createElement('canvas');
+    canvas.width = w; canvas.height = h;
+    const rctx2 = canvas.getContext('2d');
+    rctx2.fillStyle = STAGE_COLOR; rctx2.fillRect(0, 0, w, h);
+    try {
+      const mime = pickMime();
+      const mr = new MediaRecorder(canvas.captureStream(30), Object.assign(
+        { videoBitsPerSecond: maxSide >= 1900 ? 10e6 : 6e6 }, mime ? { mimeType: mime } : {}));
+      const r = { mr, canvas, ctx: rctx2, w, h, chunks: [], bytes: 0, t0: performance.now(), endWithStop: running || !!auto, mime: mr.mimeType || mime, label: '' };
+      mr.ondataavailable = (e) => {
+        if (!e.data || !e.data.size) return;
+        r.chunks.push(e.data); r.bytes += e.data.size;
+        if (r.bytes > REC_MAX_BYTES && rec === r) { const again = r.endWithStop && running; stopRec(); if (again) startRec(true); }
+      };
+      mr.onstop = () => {
+        if (!r.chunks.length) return;
+        const type = (r.mime || 'video/webm').split(';')[0];
+        const blob = new Blob(r.chunks, { type });
+        const name = `slitcam_video_${Date.now()}.${type.includes('mp4') ? 'mp4' : 'webm'}`;
+        downloadBlob(blob, name);
+        setStatus(`Video salvato: ${name} — ${r.w}×${r.h}, ${(blob.size / 1e6).toFixed(1)} MB.`, false, 8000);
+      };
+      rec = r;
+      mr.start(1000);
+      syncRecButton(true);
+    } catch (e) {
+      rec = null;
+      setStatus('Registrazione video non disponibile: ' + e.message, true, 6000);
+    }
+  }
+
+  function stopRec() {
+    if (!rec) return;
+    const r = rec;
+    drawRecFrame(r);
+    rec = null;
+    try { r.mr.requestData(); r.mr.stop(); } catch (e) { /* già fermo */ }
+    syncRecButton(true);
+  }
+
+  function drawRecFrame(r) {
+    const s = Math.min(r.w / out.width, r.h / out.height);
+    const dw = Math.round(out.width * s), dh = Math.round(out.height * s);
+    r.ctx.fillStyle = STAGE_COLOR;
+    r.ctx.fillRect(0, 0, r.w, r.h);
+    r.ctx.drawImage(out, (r.w - dw) >> 1, (r.h - dh) >> 1, dw, dh);
+  }
+
+  let recLabelT = 0;
+  function drawRec(t) {
+    if (rec) {
+      drawRecFrame(rec);
+      if (t - recLabelT > 400) {
+        recLabelT = t;
+        const sec = Math.floor((performance.now() - rec.t0) / 1000);
+        const lab = `⏹ ${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
+        if (lab !== rec.label) { rec.label = lab; ui.vRec.textContent = lab; }
+      }
+    }
+  }
+  function syncRecButton(force) {
+    ui.vRec.classList.toggle('rec', !!rec);
+    if (!rec || force) ui.vRec.textContent = rec ? '⏹ 0:00' : '⏺ Video';
+    ui.vRec.title = rec ? 'Ferma e salva il video' : 'Registra un video della formazione dell\'immagine';
+  }
+
+  ui.vRec.addEventListener('click', () => rec ? stopRec() : startRec(false));
+  ui.btnExport.addEventListener('click', exportParams);
+  ui.btnImport.addEventListener('click', () => ui.fileParams.click());
+  ui.fileParams.addEventListener('change', () => { const f = ui.fileParams.files[0]; ui.fileParams.value = ''; importParams(f); });
+  ui.auto.addEventListener('change', syncAuto);
+
   // ---- eventi ------------------------------------------------------------------
   ui.start.addEventListener('click', () => running ? stop() : start());
-  ui.clear.addEventListener('click', () => { if (hasAlloc) clearBuffer(); });
+  ui.clear.addEventListener('click', () => { if (hasAlloc) { clearBuffer(); setStatus('Immagine cancellata.', false, 2500); } });
   ui.save.addEventListener('click', save);
   ui.share.addEventListener('click', share);
-  ui.flip.addEventListener('click', flipCamera);
+  ui.camFlip.addEventListener('click', flipCamera);
   ui.btnOpts.addEventListener('click', () => setOpts(ui.opts.hidden));
+  ui.pipOn.addEventListener('change', syncPip);
 
   ui.time.addEventListener('input', syncOutputs);
   ui.quality.addEventListener('input', syncOutputs);
@@ -894,7 +1673,6 @@
 
   // sfondo: se l'immagine è ancora vuota si applica subito, altrimenti alla prossima pulizia
   ui.bg.addEventListener('input', () => {
-    out.style.background = ui.bg.value;
     if (hasAlloc && !hasContent) clearBuffer();
     else if (hasAlloc) setStatus('Sfondo cambiato: si applica con Cancella (l\'immagine esistente non cambia).', false, 4000);
   });
@@ -916,7 +1694,6 @@
       allocate();                         // nuova lunghezza: l'immagine riparte da zero
       setStatus('Lunghezza impostata a ' + len + ' px (immagine azzerata).', false, 4000);
     } else {
-      hasAlloc = false;                   // verrà riallocato al prossimo avvio
       setStatus('Lunghezza impostata a ' + len + ' px: si applica al prossimo avvio.', false, 4000);
     }
   });
@@ -924,10 +1701,10 @@
   ui.mode.addEventListener('change', () => {
     updateFasciaMax();
     if (running) {
-      allocate();                         // nuove dimensioni: l'immagine riparte da zero
-      setStatus('Modalità cambiata: ' + (isCol() ? 'colonna' : 'riga') + '.', false, 4000);
-    } else {
-      hasAlloc = false;
+      allocate();                         // nuovo verso o orientamento: l'immagine riparte da zero
+      setStatus('Scorrimento cambiato: immagine azzerata.', false, 4000);
+    } else if (hasAlloc && (ringCol !== isCol() || ringRev !== isRev())) {
+      setStatus('Scorrimento cambiato: si applica al prossimo avvio (l\'immagine attuale resta salvabile).', false, 5000);
     }
   });
 
@@ -943,6 +1720,8 @@
       case 'f': bump(ui.time, -10); break;
       case 's': save(); break;
       case 'c': if (hasAlloc) clearBuffer(); break;
+      case 'v': setViewMode(viewMode === 'fit' ? 'tail' : 'fit'); break;
+      case 'b': cycleTone(); break;
       default: return;
     }
     savePrefsSoon();
@@ -951,9 +1730,9 @@
   // preferenze: si salvano a ogni modifica
   ['change', 'input'].forEach(ev => document.addEventListener(ev, savePrefsSoon));
 
-  // anteprima adattata alla finestra
-  if (window.ResizeObserver) new ResizeObserver(fitView).observe(ui.stage);
-  window.addEventListener('resize', fitView);
+  // la vista segue le dimensioni della finestra
+  if (window.ResizeObserver) new ResizeObserver(sizeCanvas).observe(ui.stage);
+  window.addEventListener('resize', sizeCanvas);
 
   // se le camere cambiano durante la sessione (collegamento/scollegamento)
   if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
@@ -962,7 +1741,7 @@
 
   // ---- avvio della pagina: si ripristinano le preferenze --------------------------------
   (function init() {
-    const setSel = (el, v) => { if (v != null && [...el.options].some(o => o.value === String(v))) el.value = v; };
+    const setSel = setSelect;
     // risoluzioni già rilevate per la camera usata l'ultima volta
     const cached = camPref && resCache.get(camPref);
     if (cached && cached.length) fillResolutions(cached);
@@ -975,14 +1754,29 @@
     if (prefs.len) { ui.len.value = prefs.len; len = readLen(); ui.len.value = len; }
     if (prefs.time != null) ui.time.value = clamp(parseInt(prefs.time, 10) || 0, 0, 500);
     if (prefs.fascia) ui.fascia.value = clamp(parseInt(prefs.fascia, 10) || 1, 1, 16000);
-    if (prefs.bg && /^#[0-9a-f]{6}$/i.test(prefs.bg)) { ui.bg.value = prefs.bg; out.style.background = prefs.bg; }
+    if (prefs.bg && /^#[0-9a-f]{6}$/i.test(prefs.bg)) ui.bg.value = prefs.bg;
     if (prefs.quality) ui.quality.value = clamp(parseInt(prefs.quality, 10) || 92, 50, 100);
+    if (prefs.mirror != null) ui.mirror.checked = !!prefs.mirror;
+    if (prefs.once != null) ui.once.checked = !!prefs.once;
+    if (prefs.pip != null) ui.pipOn.checked = !!prefs.pip;
+    applyToneObj(prefs.tone);
+    if (prefs.dpi) ui.dpi.value = clamp(parseInt(prefs.dpi, 10) || 300, 50, 1200);
+    setSel(ui.vq, prefs.vq);
+    if (prefs.autoVid != null) ui.autoVid.checked = !!prefs.autoVid;
+    if (prefs.auto != null) ui.auto.checked = !!prefs.auto;
+    syncAuto();
+    if (!REC_OK) { ui.vRec.hidden = true; $('rowVid').hidden = $('rowAutoVid').hidden = true; }
+    readTone();
+    syncToneUi();
     ui.share.hidden = !canShareFiles();
     const open = prefs.opts != null ? !!prefs.opts : window.innerWidth >= 900;
     ui.opts.hidden = !open;
     ui.btnOpts.textContent = open ? 'Opzioni ▴' : 'Opzioni ▾';
     ui.btnOpts.setAttribute('aria-expanded', String(open));
     syncOutputs();
+    syncPrint();
+    syncViewButtons();
+    sizeCanvas();
     listCameras();
     requestAnimationFrame(uiLoop);
   })();
